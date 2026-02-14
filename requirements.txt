@@ -1,0 +1,6 @@
+Flask==3.0.2
+Flask-Login==0.6.3
+Werkzeug==3.0.1
+requests==2.31.0
+fpdf==1.7.2
+PyPDF2==3.0.1
