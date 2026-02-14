@@ -1,0 +1,2389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectFlow - User Dashboard</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- AOS Animation -->
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-gradient: linear-gradient(135deg, #4158D0 0%, #C850C0 46%, #FFCC70 100%);
+            --sidebar-gradient: linear-gradient(180deg, #141E30 0%, #243B55 100%);
+            --card-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --success-gradient: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            --warning-gradient: linear-gradient(135deg, #fad961 0%, #f76b1c 100%);
+            --danger-gradient: linear-gradient(135deg, #f43b47 0%, #453a94 100%);
+            --info-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8faff;
+            overflow-x: hidden;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        }
+
+        /* Wrapper */
+        .wrapper {
+            display: flex;
+            width: 100%;
+            align-items: stretch;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            min-width: 300px;
+            max-width: 300px;
+            background: var(--sidebar-gradient);
+            color: #fff;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            height: 100vh;
+            position: fixed;
+            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+            overflow-y: auto;
+            z-index: 1000;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        #sidebar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+        }
+
+        #sidebar .sidebar-header {
+            padding: 30px 25px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #sidebar .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: var(--primary-gradient);
+            opacity: 0.1;
+            transform: rotate(45deg);
+            animation: rotate 20s linear infinite;
+        }
+
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        #sidebar .sidebar-header h3 {
+            margin: 0;
+            font-weight: 800;
+            font-size: 1.8rem;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            position: relative;
+        }
+
+        #sidebar .sidebar-header p {
+            margin: 10px 0 0;
+            font-size: 1rem;
+            opacity: 0.9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #sidebar .sidebar-header p i {
+            font-size: 1.2rem;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        #sidebar ul.components {
+            padding: 20px 0;
+        }
+
+        #sidebar ul li {
+            margin: 5px 15px;
+        }
+
+        #sidebar ul li a {
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border-radius: 15px;
+            font-weight: 500;
+        }
+
+        #sidebar ul li a i {
+            margin-right: 15px;
+            font-size: 1.3rem;
+            width: 25px;
+            transition: all 0.3s ease;
+        }
+
+        #sidebar ul li a:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            transform: translateX(5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        #sidebar ul li a:hover i {
+            transform: scale(1.1);
+        }
+
+        #sidebar ul li.active a {
+            background: var(--primary-gradient);
+            color: #fff;
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        #sidebar ul li.active a i {
+            color: #fff;
+        }
+
+        /* Unread Badge */
+        .unread-badge {
+            background: #ff4444;
+            color: white;
+            border-radius: 50px;
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            margin-left: auto;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        /* Content Area */
+        #content {
+            width: calc(100% - 300px);
+            margin-left: 300px;
+            padding: 30px 40px;
+            min-height: 100vh;
+            transition: all 0.3s;
+            background: #f8faff;
+        }
+
+        /* Navbar */
+        .dashboard-navbar {
+            background: white;
+            border-radius: 20px;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .dashboard-navbar h4 {
+            margin: 0;
+            font-weight: 700;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 1.5rem;
+        }
+
+        .user-badge {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e9ecf5 100%);
+            padding: 10px 20px;
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+            position: relative;
+        }
+
+        .user-badge::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: var(--primary-gradient);
+            border-radius: 50px;
+            z-index: -1;
+            opacity: 0.5;
+        }
+
+        .user-badge i {
+            font-size: 1.2rem;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .user-badge span {
+            font-weight: 600;
+            color: #333;
+        }
+
+        /* Stat Cards */
+        .stat-card {
+            background: white;
+            border-radius: 25px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.05);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: var(--primary-gradient);
+            opacity: 0;
+            transform: rotate(45deg);
+            transition: all 0.6s ease;
+            z-index: 0;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 25px 45px rgba(102, 126, 234, 0.2);
+        }
+
+        .stat-card:hover::before {
+            opacity: 0.05;
+            transform: rotate(0deg);
+        }
+
+        .stat-card > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .stat-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin-bottom: 20px;
+            background: var(--primary-gradient);
+            color: white;
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: #333;
+            margin-bottom: 5px;
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 500;
+        }
+
+        /* Project Cards */
+        .project-card {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .project-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 6px;
+            height: 100%;
+            background: var(--primary-gradient);
+            opacity: 0.5;
+            transition: all 0.3s ease;
+        }
+
+        .project-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.15);
+        }
+
+        .project-card:hover::before {
+            opacity: 1;
+            width: 8px;
+        }
+
+        .project-card.status-requested::before { background: linear-gradient(135deg, #fad961 0%, #f76b1c 100%); }
+        .project-card.status-accepted::before { background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%); }
+        .project-card.status-rejected::before { background: linear-gradient(135deg, #f43b47 0%, #453a94 100%); }
+        .project-card.status-in-progress::before { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .project-card.status-completed::before { background: linear-gradient(135deg, #1cc88a 0%, #13855c 100%); }
+
+        .status-badge {
+            padding: 8px 18px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-badge.requested { background: linear-gradient(135deg, #fad961 0%, #f76b1c 100%); color: white; }
+        .status-badge.accepted { background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%); color: #155724; }
+        .status-badge.rejected { background: linear-gradient(135deg, #f43b47 0%, #453a94 100%); color: white; }
+        .status-badge.in-progress { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .status-badge.completed { background: linear-gradient(135deg, #1cc88a 0%, #13855c 100%); color: white; }
+
+        /* Progress Bar */
+        .progress {
+            height: 12px;
+            border-radius: 50px;
+            background: #e9ecef;
+            margin: 20px 0;
+            overflow: hidden;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .progress-bar {
+            background: var(--primary-gradient);
+            border-radius: 50px;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* Tracking Steps */
+        .tracking-step {
+            background: white;
+            border-radius: 18px;
+            padding: 25px;
+            margin-bottom: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.03);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .tracking-step:hover {
+            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.1);
+            transform: translateY(-3px);
+        }
+
+        .tracking-step.completed {
+            background: linear-gradient(135deg, #f8fffe 0%, #f0fff4 100%);
+        }
+
+        .step-status {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 1.2rem;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .step-status.completed {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            color: #155724;
+        }
+
+        .step-status.pending {
+            background: linear-gradient(135deg, #fad961 0%, #f76b1c 100%);
+            color: white;
+        }
+
+        /* Document Cards */
+        .document-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.02);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .document-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(102, 126, 234, 0.1);
+            border-color: rgba(102, 126, 234, 0.3);
+        }
+
+        .file-icon {
+            font-size: 2.2rem;
+            filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.1));
+        }
+
+        /* Buttons */
+        .btn-primary {
+            background: var(--primary-gradient);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: 600;
+            color: white;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: all 0.5s ease;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
+        }
+
+        .btn-outline-primary {
+            background: transparent;
+            border: 2px solid #667eea;
+            color: #667eea;
+            border-radius: 50px;
+            padding: 10px 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-outline-primary:hover {
+            background: var(--primary-gradient);
+            border-color: transparent;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: 600;
+            color: #155724;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 20px rgba(132, 250, 176, 0.3);
+        }
+
+        .btn-success:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 30px rgba(132, 250, 176, 0.4);
+        }
+
+        /* Chat */
+        .chat-container {
+            height: 500px;
+            overflow-y: auto;
+            padding: 25px;
+            background: #f8faff;
+            border-radius: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .message-bubble {
+            max-width: 80%;
+            padding: 15px 20px;
+            border-radius: 20px;
+            margin-bottom: 15px;
+            position: relative;
+            animation: fadeInUp 0.3s ease;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-bubble.user {
+            background: var(--primary-gradient);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message-bubble.admin {
+            background: white;
+            color: #333;
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .message-time {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-top: 5px;
+            text-align: right;
+        }
+
+        .message-badge {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+
+        /* Project Selector */
+        .project-selector {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 25px;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .project-selector select {
+            border-radius: 50px;
+            border: 2px solid #eef2f6;
+            padding: 12px 20px;
+            font-weight: 500;
+        }
+
+        /* Summary Box */
+        .summary-box {
+            background: linear-gradient(135deg, #f8faff 0%, #f0f3ff 100%);
+            border-radius: 20px;
+            padding: 25px;
+            margin: 20px 0;
+            border-left: 6px solid #667eea;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.1);
+        }
+
+        /* Profile */
+        .profile-photo {
+            width: 180px;
+            height: 180px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 5px solid white;
+            box-shadow: 0 15px 35px rgba(102, 126, 234, 0.3);
+            margin: 0 auto 20px;
+            transition: all 0.3s ease;
+        }
+
+        .profile-photo:hover {
+            transform: scale(1.05);
+            box-shadow: 0 20px 45px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Team Member Cards for User Portal */
+        .team-card {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            position: relative;
+            overflow: hidden;
+            height: 100%;
+        }
+
+        .team-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.15);
+        }
+
+        .team-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid white;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .team-avatar-placeholder {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+
+        .role-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        /* Breadcrumb */
+        .breadcrumb {
+            background: white;
+            padding: 15px 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.02);
+            margin-bottom: 25px;
+        }
+
+        .breadcrumb-item a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .breadcrumb-item.active {
+            color: #333;
+            font-weight: 600;
+        }
+
+        /* Alerts */
+        .alert {
+            border-radius: 15px;
+            border: none;
+            padding: 15px 25px;
+            margin-bottom: 25px;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-success {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            color: #155724;
+        }
+
+        .alert-danger {
+            background: linear-gradient(135deg, #f43b47 0%, #453a94 100%);
+            color: white;
+        }
+
+        .alert-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .alert-warning {
+            background: linear-gradient(135deg, #fad961 0%, #f76b1c 100%);
+            color: white;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            #sidebar {
+                min-width: 100%;
+                max-width: 100%;
+                position: fixed;
+                left: -100%;
+                z-index: 9999;
+            }
+            
+            #sidebar.active {
+                left: 0;
+            }
+            
+            #content {
+                width: 100%;
+                margin-left: 0;
+                padding: 20px;
+            }
+            
+            .dashboard-navbar {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+
+            .message-bubble {
+                max-width: 90%;
+            }
+        }
+
+        /* Empty States */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.02);
+        }
+
+        .empty-state i {
+            font-size: 5rem;
+            color: #ccc;
+            margin-bottom: 20px;
+        }
+
+        .empty-state h4 {
+            color: #333;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            color: #666;
+            margin-bottom: 25px;
+        }
+
+        /* Typing Indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 5px;
+            padding: 10px 15px;
+            background: #e9ecef;
+            border-radius: 20px;
+            width: fit-content;
+            margin-bottom: 15px;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #666;
+            border-radius: 50%;
+            animation: typing 1s infinite ease-in-out;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+
+        /* New Message Glow */
+        @keyframes glow {
+            0% { box-shadow: 0 0 5px rgba(102, 126, 234, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(102, 126, 234, 0.8); }
+            100% { box-shadow: 0 0 5px rgba(102, 126, 234, 0.5); }
+        }
+
+        .new-message {
+            animation: glow 2s infinite;
+        }
+
+        /* Tool/Technology Badges */
+        .tool-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 10px rgba(102, 126, 234, 0.3);
+        }
+
+        .jargon-badge {
+            background: #e9ecef;
+            color: #495057;
+            padding: 6px 12px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: 1px solid #dee2e6;
+        }
+
+        /* Contact Info Card */
+        .contact-info-card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            height: 100%;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .contact-info-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .contact-info-item:hover {
+            transform: translateX(5px);
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+
+        .contact-info-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            margin-right: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <!-- Sidebar -->
+        <nav id="sidebar">
+            <div class="sidebar-header">
+                <h3>ProjectFlow</h3>
+                <p>
+                    <i class="bi bi-person-circle"></i>
+                    {{ current_user.username }}
+                </p>
+            </div>
+
+            <ul class="list-unstyled components">
+                <li class="{% if section == 'dashboard' %}active{% endif %}">
+                    <a href="{{ url_for('user_dashboard') }}">
+                        <i class="bi bi-speedometer2"></i> Dashboard
+                    </a>
+                </li>
+                <li class="{% if section == 'projects' %}active{% endif %}">
+                    <a href="{{ url_for('user_projects') }}">
+                        <i class="bi bi-folder"></i> Projects
+                    </a>
+                </li>
+                <li class="{% if section == 'track' %}active{% endif %}">
+                    <a href="{{ url_for('user_track_projects') }}">
+                        <i class="bi bi-graph-up"></i> Track Projects
+                    </a>
+                </li>
+                <li class="{% if section == 'summarize' %}active{% endif %}">
+                    <a href="{{ url_for('user_summarize_documents') }}">
+                        <i class="bi bi-file-text"></i> Summarize Documents
+                    </a>
+                </li>
+                <li class="{% if section == 'chat' %}active{% endif %}">
+                    <a href="{{ url_for('user_chat') }}">
+                        <i class="bi bi-chat-dots"></i> Chat
+                    </a>
+                </li>
+                <li class="{% if section == 'contact' %}active{% endif %}">
+                    <a href="{{ url_for('user_contact') }}">
+                        <i class="bi bi-envelope"></i> Contact
+                    </a>
+                </li>
+                <li class="{% if section == 'profile' %}active{% endif %}">
+                    <a href="{{ url_for('user_profile') }}">
+                        <i class="bi bi-person"></i> Profile
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ url_for('logout') }}">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Page Content -->
+        <div id="content">
+            <!-- Navbar -->
+            <nav class="dashboard-navbar">
+                <h4>
+                    {% if section == 'dashboard' %}Dashboard
+                    {% elif section == 'projects' %}My Projects
+                    {% elif section == 'track' %}Track Projects
+                    {% elif section == 'track_detail' %}Project Tracking
+                    {% elif section == 'summarize' %}Document Library
+                    {% elif section == 'summarize_detail' %}AI Document Summary
+                    {% elif section == 'documents' %}Project Documents
+                    {% elif section == 'chat' %}Message Center
+                    {% elif section == 'contact' %}Contact Information
+                    {% elif section == 'profile' %}My Profile
+                    {% endif %}
+                </h4>
+                <div class="user-badge">
+                    <i class="bi bi-person-circle"></i>
+                    <span>{{ current_user.username }}</span>
+                </div>
+            </nav>
+
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                            <i class="bi bi-{% if category == 'success' %}check-circle-fill{% elif category == 'danger' %}exclamation-triangle-fill{% else %}info-circle-fill{% endif %} me-2"></i>
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- Dashboard Section -->
+            {% if section == 'dashboard' %}
+            <div class="row" data-aos="fade-up">
+                <div class="col-xl-3 col-md-6" data-aos="fade-up" data-aos-delay="100">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="bi bi-folder"></i>
+                        </div>
+                        <div class="stat-value">{{ total_projects }}</div>
+                        <div class="stat-label">Total Projects</div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6" data-aos="fade-up" data-aos-delay="200">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="bi bi-check-circle"></i>
+                        </div>
+                        <div class="stat-value">{{ accepted }}</div>
+                        <div class="stat-label">Accepted</div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6" data-aos="fade-up" data-aos-delay="300">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="bi bi-x-circle"></i>
+                        </div>
+                        <div class="stat-value">{{ rejected }}</div>
+                        <div class="stat-label">Rejected</div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6" data-aos="fade-up" data-aos-delay="400">
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </div>
+                        <div class="stat-value">{{ in_progress }}</div>
+                        <div class="stat-label">In Progress</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-4" data-aos="fade-up" data-aos-delay="500">
+                <div class="col-12">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0 py-4">
+                            <h5 class="mb-0">
+                                <i class="bi bi-clock-history me-2 text-primary"></i>
+                                Recent Projects
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            {% if projects %}
+                                {% for project in projects[:5] %}
+                                <div class="project-card status-{{ project.status|lower|replace(' ', '-') }}">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h5 class="fw-bold">{{ project.title }}</h5>
+                                            <p class="text-muted mb-2">{{ project.description|truncate(100) }}</p>
+                                            <small class="text-muted">
+                                                <i class="bi bi-calendar me-1"></i>
+                                                {{ project.created_at.strftime('%Y-%m-%d') }}
+                                            </small>
+                                        </div>
+                                        <span class="status-badge {{ project.status|lower|replace(' ', '-') }}">
+                                            {{ project.status }}
+                                        </span>
+                                    </div>
+                                    {% if project.messages|selectattr('sender', 'equalto', 'admin')|selectattr('is_read', 'equalto', false)|list|length > 0 %}
+                                    <div class="mt-2">
+                                        <span class="badge bg-warning text-dark">
+                                            <i class="bi bi-envelope-fill me-1"></i>
+                                            {{ project.messages|selectattr('sender', 'equalto', 'admin')|selectattr('is_read', 'equalto', false)|list|length }} new message(s)
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="empty-state">
+                                    <i class="bi bi-folder"></i>
+                                    <h4>No Projects Yet</h4>
+                                    <p>Get started by creating your first project</p>
+                                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestProjectModal">
+                                        <i class="bi bi-plus-circle me-2"></i>Create Project
+                                    </button>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Projects Section -->
+            {% if section == 'projects' %}
+            <div class="mb-4" data-aos="fade-up">
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestProjectModal">
+                    <i class="bi bi-plus-circle me-2"></i>Request New Project
+                </button>
+            </div>
+
+            {% if projects %}
+                <div class="row" data-aos="fade-up">
+                    {% for project in projects %}
+                    <div class="col-md-6 mb-4">
+                        <div class="project-card status-{{ project.status|lower|replace(' ', '-') }}">
+                            <div class="d-flex justify-content-between align-items-start mb-3">
+                                <h5 class="fw-bold">{{ project.title }}</h5>
+                                <span class="status-badge {{ project.status|lower|replace(' ', '-') }}">
+                                    {{ project.status }}
+                                </span>
+                            </div>
+                            <p class="text-muted mb-3">{{ project.description }}</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-muted">
+                                    <i class="bi bi-calendar me-1"></i>
+                                    {{ project.created_at.strftime('%Y-%m-%d') }}
+                                </small>
+                                <a href="{{ url_for('view_project_tracking', project_id=project.id) }}" 
+                                   class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye me-1"></i>View Details
+                                </a>
+                            </div>
+                            {% if project.messages|selectattr('sender', 'equalto', 'admin')|selectattr('is_read', 'equalto', false)|list|length > 0 %}
+                            <div class="mt-2">
+                                <span class="badge bg-warning text-dark">
+                                    <i class="bi bi-envelope-fill me-1"></i>
+                                    {{ project.messages|selectattr('sender', 'equalto', 'admin')|selectattr('is_read', 'equalto', false)|list|length }} new message(s)
+                                </span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state" data-aos="fade-up">
+                    <i class="bi bi-folder"></i>
+                    <h4>No Projects Yet</h4>
+                    <p>Click the button above to request your first project.</p>
+                </div>
+            {% endif %}
+
+            <!-- Request Project Modal -->
+            <div class="modal fade" id="requestProjectModal" tabindex="-1">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content border-0">
+                        <div class="modal-header bg-primary text-white border-0">
+                            <h5 class="modal-title">
+                                <i class="bi bi-plus-circle me-2"></i>
+                                Request New Project
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-4">
+                            <form action="{{ url_for('request_project') }}" method="POST">
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Project Title</label>
+                                    <input type="text" name="title" class="form-control form-control-lg" 
+                                           placeholder="Enter project title" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Description</label>
+                                    <textarea name="description" class="form-control" rows="5" 
+                                              placeholder="Describe your project in detail..." required></textarea>
+                                </div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-primary btn-lg">
+                                        <i class="bi bi-send me-2"></i>Submit Request
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Track Projects Section -->
+            {% if section == 'track' %}
+                {% if projects %}
+                    <div class="row" data-aos="fade-up">
+                        {% for project in projects %}
+                        <div class="col-md-6 col-lg-4 mb-4">
+                            <div class="card h-100 border-0 shadow-sm">
+                                <div class="card-body p-4">
+                                    <div class="d-flex align-items-center mb-3">
+                                        <div class="stat-icon me-3" style="width: 50px; height: 50px; font-size: 1.5rem;">
+                                            <i class="bi bi-kanban"></i>
+                                        </div>
+                                        <div>
+                                            <h5 class="fw-bold mb-1">{{ project.title }}</h5>
+                                            <span class="status-badge {{ project.status|lower|replace(' ', '-') }} small">
+                                                {{ project.status }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <p class="text-muted small mb-3">{{ project.description|truncate(80) }}</p>
+                                    
+                                    <!-- Document count -->
+                                    {% if project.documents %}
+                                        <div class="mb-3">
+                                            <small class="text-muted">
+                                                <i class="bi bi-file-text me-1"></i>
+                                                {{ project.documents|length }} document(s) uploaded
+                                            </small>
+                                        </div>
+                                    {% endif %}
+                                    
+                                    <!-- Progress Summary -->
+                                    {% set total_steps = project.tracking_steps|length %}
+                                    {% set completed_steps = project.tracking_steps|selectattr('step_status', 'equalto', 'Completed')|list|length %}
+                                    {% if total_steps > 0 %}
+                                    <div class="mb-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <small class="text-muted">Progress</small>
+                                            <small class="fw-semibold">{{ (completed_steps / total_steps * 100)|round }}%</small>
+                                        </div>
+                                        <div class="progress" style="height: 6px;">
+                                            <div class="progress-bar" style="width: {{ (completed_steps / total_steps * 100)|round }}%"></div>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <a href="{{ url_for('view_project_tracking', project_id=project.id) }}" 
+                                       class="btn btn-primary w-100">
+                                        <i class="bi bi-eye me-2"></i>Track Progress
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state" data-aos="fade-up">
+                        <i class="bi bi-graph-up"></i>
+                        <h4>No Projects to Track</h4>
+                        <p>Create a project first to start tracking progress.</p>
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            <!-- Project Tracking Detail Section -->
+            {% if section == 'track_detail' %}
+                <div class="mb-4" data-aos="fade-up">
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{{ url_for('user_track_projects') }}">Track Projects</a></li>
+                            <li class="breadcrumb-item active" aria-current="page">{{ project.title }}</li>
+                        </ol>
+                    </nav>
+
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-body p-4">
+                                    <h4 class="fw-bold mb-3">{{ project.title }}</h4>
+                                    <p class="text-muted mb-4">{{ project.description }}</p>
+                                    
+                                    <div class="mb-4">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="fw-semibold mb-0">Overall Progress</h6>
+                                            <span class="badge bg-primary">{{ progress|round|int }}%</span>
+                                        </div>
+                                        <div class="progress">
+                                            <div class="progress-bar" role="progressbar" style="width: {{ progress }}%;" 
+                                                 aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <h5 class="fw-bold mb-4">Tracking Steps</h5>
+                                    {% for step in tracking_steps %}
+                                    <div class="tracking-step {% if step.step_status == 'Completed' %}completed{% endif %} mb-3">
+                                        <div class="d-flex">
+                                            <div class="step-status {{ step.step_status|lower }} me-3">
+                                                {% if step.step_status == 'Completed' %}
+                                                    <i class="bi bi-check-lg"></i>
+                                                {% else %}
+                                                    <i class="bi bi-hourglass"></i>
+                                                {% endif %}
+                                            </div>
+                                            <div class="flex-grow-1">
+                                                <div class="d-flex justify-content-between align-items-start">
+                                                    <div>
+                                                        <h6 class="fw-bold mb-1">{{ step.step_name }}</h6>
+                                                        <p class="mb-0 text-muted small">
+                                                            <i class="bi bi-clock me-1"></i>
+                                                            Status: {{ step.step_status }}
+                                                            {% if step.updated_at %}
+                                                            | Last updated: {{ step.updated_at.strftime('%Y-%m-%d') }}
+                                                            {% endif %}
+                                                        </p>
+                                                    </div>
+                                                    <span class="badge bg-{{ 'success' if step.step_status == 'Completed' else 'warning' }}">
+                                                        {{ step.step_status }}
+                                                    </span>
+                                                </div>
+                                                
+                                                {% if step.proof_files %}
+                                                <div class="mt-3">
+                                                    <small class="fw-semibold d-block mb-2">Proof Files:</small>
+                                                    <div class="d-flex flex-wrap gap-2">
+                                                        {% for file in step.proof_files.split(',') %}
+                                                            {% set filename = file.split('/')[-1] %}
+                                                            <a href="{{ url_for('project_document', filename=filename) }}" 
+                                                               class="badge bg-info text-white text-decoration-none" target="_blank">
+                                                                <i class="bi bi-file-earmark me-1"></i>
+                                                                {{ filename|truncate(20) }}
+                                                            </a>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+                                                
+                                                {% if step.images %}
+                                                <div class="mt-3">
+                                                    <small class="fw-semibold d-block mb-2">Images:</small>
+                                                    <div class="d-flex flex-wrap gap-2">
+                                                        {% for image in step.images.split(',') %}
+                                                            {% set filename = image.split('/')[-1] %}
+                                                            <a href="{{ url_for('project_document', filename=filename) }}" target="_blank">
+                                                                <img src="{{ url_for('project_document', filename=filename) }}" 
+                                                                     alt="Step image" class="rounded" style="max-width: 80px; max-height: 80px; object-fit: cover; cursor: pointer;"
+                                                                     onerror="this.onerror=null; this.src='https://via.placeholder.com/80?text=Image';">
+                                                            </a>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <div class="card border-0 shadow-sm sticky-top" style="top: 100px;">
+                                <div class="card-body p-4">
+                                    <h5 class="fw-bold mb-4">
+                                        <i class="bi bi-file-text me-2 text-primary"></i>
+                                        Project Documents
+                                    </h5>
+                                    {% if documents %}
+                                        {% for doc in documents %}
+                                        <div class="document-card">
+                                            <div class="d-flex align-items-center">
+                                                {% if doc.file_name.endswith('.pdf') %}
+                                                    <i class="bi bi-file-pdf-fill text-danger file-icon me-3"></i>
+                                                {% elif doc.file_name.endswith(('.doc', '.docx')) %}
+                                                    <i class="bi bi-file-word-fill text-primary file-icon me-3"></i>
+                                                {% elif doc.file_name.endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                                                    <i class="bi bi-file-image-fill text-success file-icon me-3"></i>
+                                                {% else %}
+                                                    <i class="bi bi-file-text-fill text-secondary file-icon me-3"></i>
+                                                {% endif %}
+                                                <div class="flex-grow-1">
+                                                    <h6 class="fw-semibold mb-1">{{ doc.file_name|truncate(20) }}</h6>
+                                                    <small class="text-muted d-block">
+                                                        <i class="bi bi-calendar me-1"></i>
+                                                        {{ doc.uploaded_at.strftime('%Y-%m-%d') if doc.uploaded_at else 'Unknown date' }}
+                                                    </small>
+                                                </div>
+                                                <a href="{{ url_for('project_document', filename=doc.file_path) }}" 
+                                                   class="btn btn-sm btn-outline-primary" target="_blank" title="View">
+                                                    <i class="bi bi-eye"></i>
+                                                </a>
+                                                <a href="{{ url_for('project_document', filename=doc.file_path) }}" 
+                                                   class="btn btn-sm btn-outline-success ms-1" download title="Download">
+                                                    <i class="bi bi-download"></i>
+                                                </a>
+                                                <a href="{{ url_for('summarize_document', doc_id=doc.id) }}" 
+                                                   class="btn btn-sm btn-outline-info ms-1" title="Summarize">
+                                                    <i class="bi bi-file-text"></i>
+                                                </a>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <p class="text-muted text-center py-4">No documents uploaded yet.</p>
+                                    {% endif %}
+
+                                    <!-- Quick Message Button -->
+                                    <div class="mt-4">
+                                        <button class="btn btn-outline-primary w-100" onclick="openChat({{ project.id }}, '{{ project.title }}')">
+                                            <i class="bi bi-chat-dots me-2"></i>Message Admin
+                                            {% set unread_admin_msgs = project.messages|selectattr('sender', 'equalto', 'admin')|selectattr('is_read', 'equalto', false)|list|length %}
+                                            {% if unread_admin_msgs > 0 %}
+                                                <span class="badge bg-danger ms-2">{{ unread_admin_msgs }}</span>
+                                            {% endif %}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Summarize Documents Section -->
+            {% if section == 'summarize' %}
+                <div class="row" data-aos="fade-up">
+                    <div class="col-12 mb-4">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle-fill me-2"></i>
+                            Select a project to view AI-powered document summaries with extracted tools and technologies
+                        </div>
+                    </div>
+                    
+                    {% if projects %}
+                        {% for project in projects %}
+                        <div class="col-md-6 col-lg-4 mb-4">
+                            <div class="card h-100 border-0 shadow-sm">
+                                <div class="card-body p-4">
+                                    <div class="d-flex align-items-center mb-3">
+                                        <div class="stat-icon me-3" style="width: 50px; height: 50px; font-size: 1.5rem;">
+                                            <i class="bi bi-folder"></i>
+                                        </div>
+                                        <div>
+                                            <h5 class="fw-bold mb-1">{{ project.title }}</h5>
+                                            {% set doc_count = project.documents|length %}
+                                            <span class="badge bg-{{ 'success' if doc_count > 0 else 'secondary' }}">
+                                                {{ doc_count }} document{% if doc_count != 1 %}s{% endif %}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <p class="text-muted small mb-3">{{ project.description|truncate(80) }}</p>
+                                    
+                                    <!-- Document Preview if available -->
+                                    {% if doc_count > 0 %}
+                                        <div class="mb-3">
+                                            <small class="text-muted d-block mb-2">Recent documents:</small>
+                                            {% for doc in project.documents[:2] %}
+                                            <div class="d-flex align-items-center mb-2 p-2 bg-light rounded">
+                                                {% if doc.file_name.endswith('.pdf') %}
+                                                    <i class="bi bi-file-pdf-fill text-danger me-2"></i>
+                                                {% elif doc.file_name.endswith(('.doc', '.docx')) %}
+                                                    <i class="bi bi-file-word-fill text-primary me-2"></i>
+                                                {% elif doc.file_name.endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                                                    <i class="bi bi-file-image-fill text-success me-2"></i>
+                                                {% else %}
+                                                    <i class="bi bi-file-text-fill text-secondary me-2"></i>
+                                                {% endif %}
+                                                <small class="text-truncate" style="max-width: 150px;">{{ doc.file_name }}</small>
+                                            </div>
+                                            {% endfor %}
+                                            {% if project.documents|length > 2 %}
+                                                <small class="text-primary">+{{ project.documents|length - 2 }} more</small>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
+                                    
+                                    <a href="{{ url_for('view_project_documents', project_id=project.id) }}" 
+                                       class="btn btn-{{ 'primary' if doc_count > 0 else 'outline-primary' }} w-100">
+                                        <i class="bi bi-files me-2"></i>View Documents
+                                        {% if doc_count > 0 %}
+                                            <span class="badge bg-white text-primary ms-2">{{ doc_count }}</span>
+                                        {% endif %}
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="col-12">
+                            <div class="empty-state">
+                                <i class="bi bi-files"></i>
+                                <h4>No Projects Found</h4>
+                                <p>Create a project to start uploading and summarizing documents.</p>
+                                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#requestProjectModal">
+                                    <i class="bi bi-plus-circle me-2"></i>Create Project
+                                </button>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            <!-- Project Documents Section -->
+            {% if section == 'documents' %}
+                <div data-aos="fade-up">
+                    <nav aria-label="breadcrumb" class="mb-4">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{{ url_for('user_summarize_documents') }}">Document Library</a></li>
+                            <li class="breadcrumb-item active" aria-current="page">{{ project.title }}</li>
+                        </ol>
+                    </nav>
+
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-white border-0 py-4">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0 fw-bold">
+                                            <i class="bi bi-folder2-open me-2 text-primary"></i>
+                                            Documents - {{ project.title }}
+                                        </h5>
+                                        <span class="badge bg-primary">{{ documents|length }} file{% if documents|length != 1 %}s{% endif %}</span>
+                                    </div>
+                                </div>
+                                <div class="card-body p-4">
+                                    {% if documents %}
+                                        <div class="row">
+                                            {% for doc in documents %}
+                                            <div class="col-md-6 mb-3">
+                                                <div class="document-card">
+                                                    <div class="d-flex align-items-center mb-3">
+                                                        {% if doc.file_name.endswith('.pdf') %}
+                                                            <i class="bi bi-file-pdf-fill text-danger file-icon me-3"></i>
+                                                        {% elif doc.file_name.endswith(('.doc', '.docx')) %}
+                                                            <i class="bi bi-file-word-fill text-primary file-icon me-3"></i>
+                                                        {% elif doc.file_name.endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                                                            <i class="bi bi-file-image-fill text-success file-icon me-3"></i>
+                                                        {% else %}
+                                                            <i class="bi bi-file-text-fill text-secondary file-icon me-3"></i>
+                                                        {% endif %}
+                                                        <div class="flex-grow-1">
+                                                            <h6 class="fw-bold mb-1">{{ doc.file_name|truncate(25) }}</h6>
+                                                            <small class="text-muted d-block">
+                                                                <i class="bi bi-calendar me-1"></i>
+                                                                {{ doc.uploaded_at.strftime('%Y-%m-%d %H:%M') if doc.uploaded_at else 'Unknown date' }}
+                                                            </small>
+                                                        </div>
+                                                    </div>
+                                                    <div class="d-flex justify-content-end gap-2">
+                                                        <a href="{{ url_for('project_document', filename=doc.file_path) }}" 
+                                                           class="btn btn-sm btn-outline-primary" target="_blank">
+                                                            <i class="bi bi-eye"></i> View
+                                                        </a>
+                                                        <a href="{{ url_for('project_document', filename=doc.file_path) }}" 
+                                                           class="btn btn-sm btn-outline-success" download>
+                                                            <i class="bi bi-download"></i> Download
+                                                        </a>
+                                                        <a href="{{ url_for('summarize_document', doc_id=doc.id) }}" 
+                                                           class="btn btn-sm btn-outline-info">
+                                                            <i class="bi bi-file-text"></i> Summarize
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        <div class="empty-state">
+                                            <i class="bi bi-file-earmark-x" style="font-size: 4rem; color: #ccc;"></i>
+                                            <h4 class="mt-3">No Documents Found</h4>
+                                            <p class="text-muted">There are no documents uploaded for this project yet.</p>
+                                            <p class="text-muted small">Files uploaded in tracking steps will appear here once processed.</p>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-body p-4">
+                                    <h5 class="fw-bold mb-4">
+                                        <i class="bi bi-info-circle me-2 text-primary"></i>
+                                        Project Info
+                                    </h5>
+                                    <div class="mb-3">
+                                        <small class="text-muted d-block mb-1">Status</small>
+                                        <span class="status-badge {{ project.status|lower|replace(' ', '-') }}">
+                                            {{ project.status }}
+                                        </span>
+                                    </div>
+                                    <div class="mb-3">
+                                        <small class="text-muted d-block mb-1">Created</small>
+                                        <p class="fw-semibold">{{ project.created_at.strftime('%Y-%m-%d') }}</p>
+                                    </div>
+                                    <div class="mb-3">
+                                        <small class="text-muted d-block mb-1">Description</small>
+                                        <p class="text-muted">{{ project.description }}</p>
+                                    </div>
+                                    
+                                    <!-- Quick Message Button -->
+                                    <button class="btn btn-outline-primary w-100 mt-3" onclick="openChat({{ project.id }}, '{{ project.title }}')">
+                                        <i class="bi bi-chat-dots me-2"></i>Message Admin
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Document Summary Detail Section -->
+            {% if section == 'summarize_detail' %}
+                <div data-aos="fade-up">
+                    <nav aria-label="breadcrumb" class="mb-4">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{{ url_for('user_summarize_documents') }}">Document Library</a></li>
+                            <li class="breadcrumb-item"><a href="{{ url_for('view_project_documents', project_id=project.id) }}">{{ project.title }}</a></li>
+                            <li class="breadcrumb-item active">AI Summary</li>
+                        </ol>
+                    </nav>
+
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-white border-0 py-4">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <div class="d-flex align-items-center">
+                                            {% if document.file_name.endswith('.pdf') %}
+                                                <i class="bi bi-file-pdf-fill text-danger" style="font-size: 2.5rem;"></i>
+                                            {% elif document.file_name.endswith(('.doc', '.docx')) %}
+                                                <i class="bi bi-file-word-fill text-primary" style="font-size: 2.5rem;"></i>
+                                            {% elif document.file_name.endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                                                <i class="bi bi-file-image-fill text-success" style="font-size: 2.5rem;"></i>
+                                            {% else %}
+                                                <i class="bi bi-file-text-fill text-secondary" style="font-size: 2.5rem;"></i>
+                                            {% endif %}
+                                            <div class="ms-3">
+                                                <h4 class="fw-bold mb-1">{{ document.file_name }}</h4>
+                                                <small class="text-muted">
+                                                    <i class="bi bi-calendar me-1"></i>
+                                                    Uploaded: {{ document.uploaded_at.strftime('%Y-%m-%d %H:%M') if document.uploaded_at else 'Unknown date' }}
+                                                </small>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex gap-2">
+                                            <button class="btn btn-outline-primary btn-sm" onclick="regenerateSummary({{ document.id }})" id="regenerateBtn">
+                                                <i class="bi bi-arrow-repeat me-1"></i> Regenerate
+                                            </button>
+                                            <a href="{{ url_for('download_summary_pdf', doc_id=document.id) }}" 
+                                               class="btn btn-success btn-sm">
+                                                <i class="bi bi-file-pdf me-1"></i> Download PDF
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body p-4">
+                                    <!-- AI Summary Section -->
+                                    <div class="summary-box mb-4">
+                                        <div class="d-flex align-items-center mb-3">
+                                            <i class="bi bi-magic fs-1 text-primary me-3"></i>
+                                            <div>
+                                                <h5 class="fw-bold mb-1">AI-Generated Technical Summary</h5>
+                                                <small class="text-muted">Powered by OpenRouter AI</small>
+                                            </div>
+                                        </div>
+                                        <div id="summary-content">
+                                            <p class="mb-0 lead">{{ summary }}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Key Points Section -->
+                                    {% if key_points %}
+                                    <div class="mb-4">
+                                        <h5 class="fw-bold mb-3">
+                                            <i class="bi bi-list-check me-2 text-primary"></i>
+                                            Key Findings & Insights ({{ key_points|length }} points)
+                                        </h5>
+                                        <div class="row">
+                                            {% for point in key_points %}
+                                            <div class="col-md-6 mb-2">
+                                                <div class="d-flex">
+                                                    <i class="bi bi-check-circle-fill text-success me-2 flex-shrink-0" style="font-size: 1.1rem;"></i>
+                                                    <span>{{ point }}</span>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Tools & Technologies Section -->
+                                    {% if tools_technologies %}
+                                    <div class="mb-4">
+                                        <h5 class="fw-bold mb-3">
+                                            <i class="bi bi-tools me-2 text-primary"></i>
+                                            Tools & Technologies Identified
+                                        </h5>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            {% for tool in tools_technologies %}
+                                            <span class="tool-badge">
+                                                <i class="bi bi-gear-fill me-1"></i> {{ tool }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Technical Jargon Section -->
+                                    {% if technical_jargon %}
+                                    <div class="mb-4">
+                                        <h5 class="fw-bold mb-3">
+                                            <i class="bi bi-chat-quote me-2 text-primary"></i>
+                                            Technical Terminology
+                                        </h5>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            {% for term in technical_jargon %}
+                                            <span class="jargon-badge">
+                                                <i class="bi bi-quote me-1"></i> {{ term }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <!-- Full Document (Collapsible) -->
+                                    <div class="mt-4">
+                                        <button class="btn btn-link text-decoration-none p-0" type="button" data-bs-toggle="collapse" data-bs-target="#fullDocument">
+                                            <i class="bi bi-chevron-down me-1"></i> View Full Document
+                                        </button>
+                                        <div class="collapse mt-3" id="fullDocument">
+                                            <div class="bg-light p-4 rounded" style="max-height: 400px; overflow-y: auto;">
+                                                <pre style="white-space: pre-wrap; font-family: inherit; margin: 0;">{{ full_text }}</pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Actions -->
+                                    <div class="mt-4 d-flex gap-2">
+                                        <a href="{{ url_for('project_document', filename=document.file_path) }}" 
+                                           class="btn btn-primary" download>
+                                            <i class="bi bi-download me-2"></i>Download Original
+                                        </a>
+                                        <a href="{{ url_for('view_project_documents', project_id=project.id) }}" 
+                                           class="btn btn-outline-secondary">
+                                            <i class="bi bi-arrow-left me-2"></i>Back to Documents
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4">
+                            <div class="card border-0 shadow-sm sticky-top" style="top: 100px;">
+                                <div class="card-header bg-white border-0 py-4">
+                                    <h5 class="mb-0 fw-bold">
+                                        <i class="bi bi-chat-dots me-2 text-primary"></i>
+                                        Discuss with Admin
+                                    </h5>
+                                </div>
+                                <div class="card-body p-4">
+                                    <div class="chat-container" id="chatContainer" style="height: 400px;">
+                                        {% if messages %}
+                                            {% for msg in messages %}
+                                            <div class="message-bubble {% if msg.sender == 'user' %}user{% else %}admin{% endif %}">
+                                                <div class="message-content">{{ msg.message }}</div>
+                                                <div class="message-time">
+                                                    {{ msg.timestamp.strftime('%H:%M, %d %b') }}
+                                                    {% if msg.sender == 'admin' %}
+                                                        <span class="badge bg-primary ms-2">ADMIN</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary ms-2">YOU</span>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        {% else %}
+                                            <div class="text-center text-muted py-4">
+                                                <i class="bi bi-chat" style="font-size: 3rem;"></i>
+                                                <p class="mt-3">Ask questions about the AI analysis or request clarification</p>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                    
+                                    <div class="input-group mt-3">
+                                        <input type="text" class="form-control form-control-lg" id="messageInput" 
+                                               placeholder="Ask about the analysis..." onkeypress="handleKeyPress(event)">
+                                        <button class="btn btn-primary" onclick="sendMessage({{ project.id }})">
+                                            <i class="bi bi-send"></i>
+                                        </button>
+                                    </div>
+                                    <small class="text-muted mt-2 d-block">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Discuss the AI-generated insights with your admin
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Chat Section -->
+            {% if section == 'chat' %}
+                <div data-aos="fade-up">
+                    <!-- Project Selector for Chat -->
+                    <div class="project-selector mb-4">
+                        <h5 class="fw-bold mb-3">
+                            <i class="bi bi-chat-dots me-2 text-primary"></i>
+                            Select Project to Chat
+                        </h5>
+                        <select class="form-select form-select-lg" id="chatProjectSelect" onchange="loadProjectChat(this.value)">
+                            <option value="">Choose a project...</option>
+                            {% for project in projects %}
+                                {% set unread_count = unread_counts.get(project.id, 0) %}
+                                <option value="{{ project.id }}" data-title="{{ project.title }}">
+                                    {{ project.title }}
+                                    {% if unread_count > 0 %}
+                                        ({{ unread_count }} new message{% if unread_count > 1 %}s{% endif %})
+                                    {% endif %}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Chat Container -->
+                    <div id="chatContainer" style="display: none;">
+                        {% for project, project_messages in messages.items() %}
+                            <div id="chat-{{ project.id }}" class="chat-project" style="display: none;">
+                                <div class="card border-0 shadow-sm mb-4">
+                                    <div class="card-header bg-white border-0 py-4">
+                                        <div class="d-flex align-items-center justify-content-between">
+                                            <div class="d-flex align-items-center">
+                                                <i class="bi bi-folder me-2 text-primary"></i>
+                                                <h5 class="mb-0 fw-bold">{{ project.title }}</h5>
+                                            </div>
+                                            <span class="badge bg-primary">{{ project_messages|length }} messages</span>
+                                        </div>
+                                        <small class="text-muted d-block mt-2">{{ project.description|truncate(100) }}</small>
+                                    </div>
+                                    <div class="card-body p-4">
+                                        <div class="chat-container" id="chatContainer{{ project.id }}" style="height: 500px;">
+                                            {% for msg in project_messages %}
+                                            <div class="message-bubble {% if msg.sender == 'user' %}user{% else %}admin{% endif %}">
+                                                <div class="message-content">{{ msg.message }}</div>
+                                                <div class="message-time">
+                                                    {{ msg.timestamp.strftime('%H:%M, %d %b') }}
+                                                    {% if msg.sender == 'admin' %}
+                                                        <span class="badge bg-primary ms-2">ADMIN</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary ms-2">YOU</span>
+                                                    {% endif %}
+                                                    {% if not msg.is_read and msg.sender == 'admin' %}
+                                                        <span class="badge bg-warning text-dark ms-2">New</span>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                        
+                                        <div class="input-group mt-3">
+                                            <input type="text" class="form-control form-control-lg" 
+                                                   id="messageInput{{ project.id }}" 
+                                                   placeholder="Type your message..." 
+                                                   onkeypress="handleKeyPress(event, {{ project.id }})">
+                                            <button class="btn btn-primary" onclick="sendMessage({{ project.id }})">
+                                                <i class="bi bi-send"></i> Send
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+
+                    {% if not messages %}
+                        <div class="empty-state">
+                            <i class="bi bi-chat-dots"></i>
+                            <h4>No Messages Yet</h4>
+                            <p>Start a conversation by asking questions about your projects or documents.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            <!-- Contact Section - UPDATED with Team Members -->
+            {% if section == 'contact' %}
+                <div data-aos="fade-up">
+                    <!-- Company Contact Information -->
+                    {% if contact %}
+                    <div class="row mb-5">
+                        <div class="col-12">
+                            <h4 class="fw-bold mb-4">
+                                <i class="bi bi-building me-2 text-primary"></i>
+                                Company Information
+                            </h4>
+                        </div>
+                        <div class="col-md-4 mb-4">
+                            <div class="contact-info-card">
+                                <div class="contact-info-item">
+                                    <div class="contact-info-icon">
+                                        <i class="bi bi-envelope-fill"></i>
+                                    </div>
+                                    <div>
+                                        <small class="text-muted d-block">Email</small>
+                                        <a href="mailto:{{ contact.email }}" class="fw-semibold text-decoration-none text-dark">
+                                            {{ contact.email }}
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-4">
+                            <div class="contact-info-card">
+                                <div class="contact-info-item">
+                                    <div class="contact-info-icon">
+                                        <i class="bi bi-telephone-fill"></i>
+                                    </div>
+                                    <div>
+                                        <small class="text-muted d-block">Phone</small>
+                                        <a href="tel:{{ contact.phone }}" class="fw-semibold text-decoration-none text-dark">
+                                            {{ contact.phone }}
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-4">
+                            <div class="contact-info-card">
+                                <div class="contact-info-item">
+                                    <div class="contact-info-icon">
+                                        <i class="bi bi-geo-alt-fill"></i>
+                                    </div>
+                                    <div>
+                                        <small class="text-muted d-block">Address</small>
+                                        <span class="fw-semibold">{{ contact.address }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Team Members Section -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <h4 class="fw-bold mb-4">
+                                <i class="bi bi-people-fill me-2 text-primary"></i>
+                                Our Team
+                            </h4>
+                        </div>
+                        
+                        {% if team_members %}
+                            {% for member in team_members %}
+                            <div class="col-md-6 col-lg-4 mb-4">
+                                <div class="team-card">
+                                    <div class="d-flex align-items-start mb-3">
+                                        <div class="me-3">
+                                            {% if member.photo %}
+                                                {% set filename = member.photo.split('/')[-1] %}
+                                                <img src="{{ url_for('team_photo', filename=filename) }}" alt="{{ member.name }}" class="team-avatar"
+                                                     onerror="this.onerror=null; this.src='https://via.placeholder.com/80x80?text=Error';">
+                                            {% else %}
+                                                <div class="team-avatar-placeholder">
+                                                    {{ member.name[:1] }}{{ member.name.split()[-1][:1] if ' ' in member.name else member.name[:2] }}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="flex-grow-1">
+                                            <h5 class="fw-bold mb-1">{{ member.name }}</h5>
+                                            <span class="role-badge mb-2">{{ member.role }}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-2">
+                                        <small class="text-muted d-block">
+                                            <i class="bi bi-envelope me-1"></i> 
+                                            <a href="mailto:{{ member.email }}" class="text-decoration-none text-dark">{{ member.email }}</a>
+                                        </small>
+                                        <small class="text-muted d-block">
+                                            <i class="bi bi-telephone me-1"></i> 
+                                            <a href="tel:{{ member.mobile }}" class="text-decoration-none text-dark">{{ member.mobile }}</a>
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="col-12">
+                                <div class="empty-state">
+                                    <i class="bi bi-people"></i>
+                                    <h4>No Team Members Added</h4>
+                                    <p>Team information will be displayed here once added by the administrator.</p>
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Office Hours Card -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-body p-4">
+                                    <h4 class="fw-bold mb-4">
+                                        <i class="bi bi-clock-fill me-2 text-primary"></i>
+                                        Office Hours
+                                    </h4>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="d-flex justify-content-between align-items-center p-3 bg-light rounded mb-3">
+                                                <span class="fw-semibold">Monday - Friday</span>
+                                                <span>9:00 AM - 6:00 PM</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="d-flex justify-content-between align-items-center p-3 bg-light rounded mb-3">
+                                                <span class="fw-semibold">Saturday</span>
+                                                <span>10:00 AM - 4:00 PM</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="d-flex justify-content-between align-items-center p-3 bg-light rounded mb-3">
+                                                <span class="fw-semibold">Sunday</span>
+                                                <span class="text-danger">Closed</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 p-3 bg-primary bg-opacity-10 rounded">
+                                        <small class="text-primary d-block mb-2">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Emergency Support
+                                        </small>
+                                        <p class="mb-0">For urgent issues, please email us at {{ contact.email if contact else 'support@projectflow.com' }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Profile Section -->
+            {% if section == 'profile' %}
+            <div data-aos="fade-up">
+                <div class="row">
+                    <div class="col-md-4 mb-4">
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-body p-4 text-center">
+                                {% if current_user.profile_photo %}
+                                    {% set filename = current_user.profile_photo.split('/')[-1] %}
+                                    <img src="{{ url_for('profile_photo', filename=filename) }}" alt="Profile" class="profile-photo" 
+                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/180x180?text=Error';">
+                                {% else %}
+                                    <div class="profile-photo bg-light d-flex align-items-center justify-content-center mx-auto">
+                                        <i class="bi bi-person" style="font-size: 5rem; color: #ccc;"></i>
+                                    </div>
+                                {% endif %}
+                                <h4 class="fw-bold mt-3">{{ current_user.username }}</h4>
+                                <p class="text-muted">{{ current_user.email }}</p>
+                                
+                                <form action="{{ url_for('update_profile') }}" method="POST" enctype="multipart/form-data" class="mt-4">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">Update Profile Photo</label>
+                                        <input type="file" name="profile_photo" class="form-control" accept="image/*" required>
+                                        <small class="text-muted">Supported formats: PNG, JPG, JPEG, GIF</small>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100">
+                                        <i class="bi bi-upload me-2"></i>Upload Photo
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-8 mb-4">
+                        <div class="card border-0 shadow-sm mb-4">
+                            <div class="card-header bg-white border-0 py-4">
+                                <h5 class="mb-0 fw-bold">
+                                    <i class="bi bi-key me-2 text-primary"></i>
+                                    Change Password
+                                </h5>
+                            </div>
+                            <div class="card-body p-4">
+                                <form action="{{ url_for('user_change_password') }}" method="POST">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">Current Password</label>
+                                        <input type="password" name="current_password" class="form-control form-control-lg" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">New Password</label>
+                                        <input type="password" name="new_password" class="form-control form-control-lg" required>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label class="form-label fw-semibold">Confirm New Password</label>
+                                        <input type="password" name="confirm_password" class="form-control form-control-lg" required>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-key me-2"></i>Update Password
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                        
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-header bg-white border-0 py-4">
+                                <h5 class="mb-0 fw-bold">
+                                    <i class="bi bi-info-circle me-2 text-primary"></i>
+                                    Account Information
+                                </h5>
+                            </div>
+                            <div class="card-body p-4">
+                                <div class="row">
+                                    <div class="col-sm-6 mb-3">
+                                        <small class="text-muted d-block">Username</small>
+                                        <span class="fw-semibold">{{ current_user.username }}</span>
+                                    </div>
+                                    <div class="col-sm-6 mb-3">
+                                        <small class="text-muted d-block">Email</small>
+                                        <span class="fw-semibold">{{ current_user.email }}</span>
+                                    </div>
+                                    <div class="col-sm-6 mb-3">
+                                        <small class="text-muted d-block">Mobile</small>
+                                        <span class="fw-semibold">{{ current_user.mobile or 'Not provided' }}</span>
+                                    </div>
+                                    <div class="col-sm-6 mb-3">
+                                        <small class="text-muted d-block">Member Since</small>
+                                        <span class="fw-semibold">{{ current_user.created_at.strftime('%Y-%m-%d') if current_user.created_at else current_user.id }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Message Modal for Quick Messaging -->
+    <div class="modal fade" id="messageModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title">
+                        <i class="bi bi-chat-dots me-2"></i>
+                        Message Admin - <span id="modalProjectTitle"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <input type="hidden" id="modalProjectId">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Your Message</label>
+                        <textarea class="form-control" id="modalMessage" rows="4" 
+                                  placeholder="Type your message here..."></textarea>
+                    </div>
+                    <div class="d-grid">
+                        <button class="btn btn-primary" onclick="sendModalMessage()">
+                            <i class="bi bi-send me-2"></i>Send Message
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    
+    <script>
+        // Initialize AOS
+        AOS.init({
+            duration: 800,
+            once: true,
+            offset: 50
+        });
+
+        // Open chat modal
+        function openChat(projectId, projectTitle) {
+            document.getElementById('modalProjectId').value = projectId;
+            document.getElementById('modalProjectTitle').textContent = projectTitle;
+            document.getElementById('modalMessage').value = '';
+            new bootstrap.Modal(document.getElementById('messageModal')).show();
+        }
+
+        // Send message from modal
+        function sendModalMessage() {
+            const projectId = document.getElementById('modalProjectId').value;
+            const message = document.getElementById('modalMessage').value.trim();
+            
+            if (!message) {
+                alert('Please enter a message');
+                return;
+            }
+            
+            fetch('/user/send-message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `project_id=${projectId}&message=${encodeURIComponent(message)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Close modal
+                    bootstrap.Modal.getInstance(document.getElementById('messageModal')).hide();
+                    
+                    // Show success message
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                    alertDiv.innerHTML = `
+                        <i class="bi bi-check-circle-fill me-2"></i>
+                        Message sent successfully!
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    `;
+                    document.querySelector('#content').insertBefore(alertDiv, document.querySelector('#content').firstChild);
+                    
+                    // Auto dismiss after 3 seconds
+                    setTimeout(() => alertDiv.remove(), 3000);
+                }
+            });
+        }
+
+        // Handle Enter key in chat
+        function handleKeyPress(event, projectId) {
+            if (event.key === 'Enter') {
+                sendMessage(projectId);
+            }
+        }
+
+        // Send message function
+        function sendMessage(projectId) {
+            const input = document.getElementById(`messageInput${projectId}`);
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            fetch('/user/send-message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `project_id=${projectId}&message=${encodeURIComponent(message)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const chatContainer = document.getElementById(`chatContainer${projectId}`);
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message-bubble user';
+                    messageDiv.innerHTML = `
+                        <div class="message-content">${message}</div>
+                        <div class="message-time">
+                            Just now
+                            <span class="badge bg-secondary ms-2">YOU</span>
+                        </div>
+                    `;
+                    chatContainer.appendChild(messageDiv);
+                    input.value = '';
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+            });
+        }
+
+        // Load project chat
+        function loadProjectChat(projectId) {
+            // Hide all chat containers
+            document.querySelectorAll('.chat-project').forEach(el => {
+                el.style.display = 'none';
+            });
+            
+            if (projectId) {
+                // Show selected chat
+                document.getElementById(`chat-${projectId}`).style.display = 'block';
+                document.getElementById('chatContainer').style.display = 'block';
+                
+                // Scroll to bottom
+                const chatContainer = document.getElementById(`chatContainer${projectId}`);
+                if (chatContainer) {
+                    setTimeout(() => {
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }, 100);
+                }
+                
+                // Mark messages as read
+                markMessagesAsRead(projectId);
+            } else {
+                document.getElementById('chatContainer').style.display = 'none';
+            }
+        }
+
+        // Mark messages as read
+        function markMessagesAsRead(projectId) {
+            fetch(`/user/mark-messages-read/${projectId}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('Messages marked as read');
+                }
+            });
+        }
+
+        // Regenerate AI summary
+        function regenerateSummary(docId) {
+            const btn = document.getElementById('regenerateBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
+            btn.disabled = true;
+            
+            fetch(`/user/regenerate-summary/${docId}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Reload the page to show new summary
+                    location.reload();
+                } else {
+                    alert('Failed to regenerate summary: ' + data.error);
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error regenerating summary');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            });
+        }
+
+        // Scroll chats to bottom on load
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.chat-container').forEach(container => {
+                container.scrollTop = container.scrollHeight;
+            });
+            
+            // Check for unread messages in URL hash
+            if (window.location.hash) {
+                const projectId = window.location.hash.replace('#chat-', '');
+                if (projectId) {
+                    const select = document.getElementById('chatProjectSelect');
+                    if (select) {
+                        select.value = projectId;
+                        loadProjectChat(projectId);
+                    }
+                }
+            }
+        });
+
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('active');
+        }
+    </script>
+</body>
+</html>
