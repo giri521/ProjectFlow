@@ -15,6 +15,8 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from fpdf import FPDF
 import PyPDF2
 import os
+import tempfile
+import time
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
@@ -24,26 +26,22 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # Backendless Configuration
 BACKENDLESS_APP_ID = "EE1B45EF-1CFF-4136-B4D8-0884284D6647"
 BACKENDLESS_API_KEY = "E470F076-0348-426B-AD5B-6FA5715D009A"
-BACKENDLESS_BASE_URL = f"https://api.backendless.com/{BACKENDLESS_APP_ID}/{BACKENDLESS_API_KEY}"
-BACKENDLESS_DATA_URL = f"{BACKENDLESS_BASE_URL}/data"
-BACKENDLESS_FILES_URL = f"{BACKENDLESS_BASE_URL}/files"
+BACKENDLESS_API_URL = f"https://api.backendless.com/{BACKENDLESS_APP_ID}/{BACKENDLESS_API_KEY}"
 
 # OpenRouter AI Configuration
-app.config['OPENROUTER_API_KEY'] = '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'  # Replace with your actual API key
+app.config['OPENROUTER_API_KEY'] = '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'
 app.config['OPENROUTER_API_URL'] = 'https://openrouter.ai/api/v1/chat/completions'
-app.config['OPENROUTER_MODEL'] = 'openai/gpt-3.5-turbo'  # You can change this model
+app.config['OPENROUTER_MODEL'] = 'openai/gpt-3.5-turbo'
 
-# Email configuration for OTP (Update with your email credentials)
+# Email configuration for OTP
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'girivennapusa8@gmail.com'  # Replace with your email
-app.config['MAIL_PASSWORD'] = 'exftkirzmhjwplmr'  # Replace with your app password
+app.config['MAIL_USERNAME'] = 'girivennapusa8@gmail.com'
+app.config['MAIL_PASSWORD'] = 'exftkirzmhjwplmr'
 app.config['MAIL_DEFAULT_SENDER'] = 'your-email@gmail.com'
 
-
-
-# Ensure upload directory exists
+# Ensure upload directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos'), exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents'), exist_ok=True)
@@ -56,87 +54,145 @@ login_manager.login_view = 'base'
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx', 'txt'}
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# OTP Storage (in-memory, can be moved to Backendless if needed)
+otp_storage = {}  # Format: {email: {'otp': '123456', 'timestamp': 1234567890}}
 
-# Backendless API Helper Functions
+# ============================================================================
+# BACKENDLESS HELPER FUNCTIONS
+# ============================================================================
+
 def backendless_request(method, endpoint, data=None, params=None):
     """Make a request to Backendless REST API"""
-    url = f"{BACKENDLESS_DATA_URL}/{endpoint}"
+    url = f"{BACKENDLESS_API_URL}/{endpoint}"
     
     headers = {
         'Content-Type': 'application/json'
     }
     
     try:
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            json=data,
-            params=params,
-            timeout=30
-        )
+        if method.upper() == 'GET':
+            response = requests.get(url, headers=headers, params=params)
+        elif method.upper() == 'POST':
+            response = requests.post(url, headers=headers, json=data)
+        elif method.upper() == 'PUT':
+            response = requests.put(url, headers=headers, json=data)
+        elif method.upper() == 'DELETE':
+            response = requests.delete(url, headers=headers)
+        else:
+            return {'success': False, 'error': 'Invalid method'}, 400
         
         if response.status_code in [200, 201]:
-            return response.json()
-        elif response.status_code == 204:  # No content (successful delete)
-            return True
+            return response.json(), response.status_code
         else:
-            print(f"Backendless API error: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        print(f"Backendless request failed: {str(e)}")
-        return None
+            print(f"Backendless API Error: {response.status_code} - {response.text}")
+            return {'success': False, 'error': response.text}, response.status_code
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Backendless Request Exception: {str(e)}")
+        return {'success': False, 'error': str(e)}, 500
 
-def backendless_get_all(table, where_clause=None):
-    """Get all objects from a table with optional where clause"""
-    params = {}
+def create_object(table_name, data):
+    """Create a new object in Backendless"""
+    return backendless_request('POST', f'data/{table_name}', data=data)
+
+def get_objects(table_name, where_clause=None, page_size=100, offset=0):
+    """Get objects from Backendless with optional where clause"""
+    params = {
+        'pageSize': page_size,
+        'offset': offset
+    }
     if where_clause:
         params['where'] = where_clause
-    return backendless_request('GET', table, params=params) or []
-
-def backendless_get_by_id(table, object_id):
-    """Get object by ID"""
-    return backendless_request('GET', f"{table}/{object_id}")
-
-def backendless_create(table, data):
-    """Create new object"""
-    return backendless_request('POST', table, data=data)
-
-def backendless_update(table, object_id, data):
-    """Update existing object"""
-    return backendless_request('PUT', f"{table}/{object_id}", data=data)
-
-def backendless_delete(table, object_id):
-    """Delete object"""
-    return backendless_request('DELETE', f"{table}/{object_id}")
-
-def backendless_upload_file(file, folder='uploads'):
-    """Upload file to Backendless"""
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = secure_filename(f"{timestamp}_{file.filename}")
-    upload_url = f"{BACKENDLESS_FILES_URL}/{folder}/{filename}"
     
+    return backendless_request('GET', f'data/{table_name}', params=params)
+
+def get_object_by_id(table_name, object_id):
+    """Get a single object by ID"""
+    return backendless_request('GET', f'data/{table_name}/{object_id}')
+
+def update_object(table_name, object_id, data):
+    """Update an object in Backendless"""
+    return backendless_request('PUT', f'data/{table_name}/{object_id}', data=data)
+
+def delete_object(table_name, object_id):
+    """Delete an object from Backendless"""
+    return backendless_request('DELETE', f'data/{table_name}/{object_id}')
+
+def upload_file_to_backendless(file, folder_name):
+    """Upload a file to Backendless and return the file URL"""
     try:
-        response = requests.put(
-            upload_url,
-            data=file.read(),
-            headers={'Content-Type': 'application/octet-stream'}
-        )
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_filename = secure_filename(file.filename)
+        filename = f"{timestamp}_{safe_filename}"
         
-        if response.status_code == 200:
-            file_url = f"{BACKENDLESS_FILES_URL}/{folder}/{filename}"
-            return filename, file_url
+        # Save locally first (temporarily)
+        local_path = os.path.join(app.config['UPLOAD_FOLDER'], folder_name, filename)
+        file.save(local_path)
+        
+        # Upload to Backendless file service
+        url = f"{BACKENDLESS_API_URL}/files/{folder_name}/{filename}"
+        
+        with open(local_path, 'rb') as f:
+            files = {'file': (filename, f, 'application/octet-stream')}
+            response = requests.post(url, files=files)
+        
+        if response.status_code in [200, 201]:
+            file_url = response.json().get('fileURL')
+            return {
+                'success': True,
+                'filename': filename,
+                'url': file_url,
+                'local_path': local_path
+            }
         else:
-            print(f"File upload failed: {response.status_code} - {response.text}")
-            return None, None
+            return {'success': False, 'error': response.text}
+            
     except Exception as e:
         print(f"File upload error: {str(e)}")
-        return None, None
+        return {'success': False, 'error': str(e)}
 
-# OTP Storage
-otp_storage = {}  # Format: {email: {'otp': '123456', 'timestamp': 1234567890}}
+# ============================================================================
+# USER CLASS FOR FLASK-LOGIN
+# ============================================================================
+
+class User(UserMixin):
+    def __init__(self, user_data):
+        self.id = user_data.get('objectId')
+        self.username = user_data.get('username')
+        self.email = user_data.get('email')
+        self.mobile = user_data.get('mobile')
+        self.password = user_data.get('password')
+        self.profile_photo = user_data.get('profile_photo')
+        self.created_at = user_data.get('created')
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user from Backendless by ID"""
+    result, status = get_object_by_id('Users', user_id)
+    if status == 200:
+        return User(result)
+    return None
+
+def get_user_by_email_or_username(email_or_username):
+    """Get user by email or username"""
+    # Try by email first
+    result, status = get_objects('Users', f"email = '{email_or_username}'")
+    if status == 200 and result and len(result) > 0:
+        return User(result[0])
+    
+    # Try by username
+    result, status = get_objects('Users', f"username = '{email_or_username}'")
+    if status == 200 and result and len(result) > 0:
+        return User(result[0])
+    
+    return None
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def generate_otp():
     """Generate a 6-digit OTP"""
@@ -329,24 +385,47 @@ def extract_text_from_file(filename, file_display_name):
     except Exception as e:
         return f"Error reading file: {str(e)}"
 
-# Custom User class for Flask-Login
-class User(UserMixin):
-    def __init__(self, user_data):
-        self.id = user_data.get('objectId')
-        self.username = user_data.get('username')
-        self.email = user_data.get('email')
-        self.mobile = user_data.get('mobile')
-        self.password = user_data.get('password')
-        self.profile_photo = user_data.get('profile_photo')
-        self.created_at = user_data.get('created_at')
-        self.objectId = user_data.get('objectId')
-
-@login_manager.user_loader
-def load_user(user_id):
-    user_data = backendless_get_by_id('Users', user_id)
-    if user_data:
-        return User(user_data)
-    return None
+def clean_text_for_pdf(text):
+    """Clean text to remove characters that cause encoding issues in PDF"""
+    if not text:
+        return ""
+    # Replace common problematic characters
+    replacements = {
+        '•': '-',
+        '●': '-',
+        '○': '-',
+        '◆': '-',
+        '▪': '-',
+        '✓': '√',
+        '✗': 'X',
+        '✘': 'X',
+        '★': '*',
+        '☆': '*',
+        '❤': '<3',
+        '☺': ':)',
+        '☹': ':(',
+        '♠': '(spade)',
+        '♣': '(club)',
+        '♥': '<3',
+        '♦': '(diamond)',
+        '→': '->',
+        '←': '<-',
+        '↑': '^',
+        '↓': 'v',
+        '↔': '<->',
+        '“': '"',
+        '”': '"',
+        '‘': "'",
+        '’': "'",
+        '…': '...',
+        '—': '-',
+        '–': '-',
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    
+    # Remove any remaining non-Latin-1 characters
+    return text.encode('latin-1', errors='ignore').decode('latin-1')
 
 def admin_required(f):
     @wraps(f)
@@ -357,7 +436,10 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Routes
+# ============================================================================
+# ROUTES
+# ============================================================================
+
 @app.route('/')
 def base():
     return render_template('base.html')
@@ -380,13 +462,13 @@ def signup():
             return redirect(url_for('base'))
         
         # Check if user exists in Backendless
-        existing_users = backendless_get_all('Users', f"username='{username}'")
-        if existing_users and len(existing_users) > 0:
+        existing_user, status = get_objects('Users', f"username = '{username}'")
+        if status == 200 and existing_user and len(existing_user) > 0:
             flash('Username already exists', 'danger')
             return redirect(url_for('base'))
         
-        existing_emails = backendless_get_all('Users', f"email='{email}'")
-        if existing_emails and len(existing_emails) > 0:
+        existing_email, status = get_objects('Users', f"email = '{email}'")
+        if status == 200 and existing_email and len(existing_email) > 0:
             flash('Email already registered', 'danger')
             return redirect(url_for('base'))
         
@@ -433,13 +515,12 @@ def signup():
             'username': username,
             'email': email,
             'mobile': mobile,
-            'password': hashed_password,
-            'created_at': datetime.now().isoformat()
+            'password': hashed_password
         }
         
-        new_user = backendless_create('Users', user_data)
+        result, status = create_object('Users', user_data)
         
-        if new_user:
+        if status == 200:
             # Clear OTP
             otp_storage.pop(email, None)
             flash('Registration successful! Please login.', 'success')
@@ -462,9 +543,9 @@ def send_otp():
         if not email:
             return jsonify({'success': False, 'message': 'Email is required'}), 400
         
-        # Check if email already registered
-        existing_emails = backendless_get_all('Users', f"email='{email}'")
-        if existing_emails and len(existing_emails) > 0:
+        # Check if email already registered in Backendless
+        existing, status = get_objects('Users', f"email = '{email}'")
+        if status == 200 and existing and len(existing) > 0:
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
         # Generate OTP
@@ -505,17 +586,11 @@ def user_login():
         flash('Please enter both username/email and password', 'danger')
         return redirect(url_for('base'))
     
-    # Find user by username or email
-    users = backendless_get_all('Users', f"username='{username_or_email}'")
-    if not users or len(users) == 0:
-        users = backendless_get_all('Users', f"email='{username_or_email}'")
+    user = get_user_by_email_or_username(username_or_email)
     
-    if users and len(users) > 0:
-        user_data = users[0]
-        if check_password_hash(user_data['password'], password):
-            user = User(user_data)
-            login_user(user)
-            return redirect(url_for('user_dashboard'))
+    if user and check_password_hash(user.password, password):
+        login_user(user)
+        return redirect(url_for('user_dashboard'))
     
     flash('Invalid credentials', 'danger')
     return redirect(url_for('base'))
@@ -546,7 +621,10 @@ def admin_logout():
     session.pop('is_admin', None)
     return redirect(url_for('admin_login'))
 
-# File serving routes (still use local files for now)
+# ============================================================================
+# FILE SERVING ROUTES
+# ============================================================================
+
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
     """Serve files from the uploads directory"""
@@ -591,12 +669,17 @@ def team_photo(filename):
         print(f"Error serving team photo {filename}: {str(e)}")
         return "File not found", 404
 
-# User Routes
+# ============================================================================
+# USER ROUTES
+# ============================================================================
+
 @app.route('/user/dashboard')
 @login_required
 def user_dashboard():
-    # Get user's projects
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    # Get user's projects from Backendless
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    
+    projects = projects_result if status == 200 else []
     
     total_projects = len(projects)
     accepted = len([p for p in projects if p.get('status') == 'Accepted'])
@@ -605,8 +688,9 @@ def user_dashboard():
     
     # Get unread message count for each project
     for project in projects:
-        unread_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='admin' AND is_read=false") or []
-        project['unread_count'] = len(unread_messages)
+        messages_result, msg_status = get_objects('Messages', 
+            f"project_id = '{project.get('objectId')}' AND sender = 'admin' AND is_read = false")
+        project['unread_count'] = len(messages_result) if msg_status == 200 else 0
     
     return render_template('user.html', 
                          section='dashboard',
@@ -619,7 +703,8 @@ def user_dashboard():
 @app.route('/user/projects')
 @login_required
 def user_projects():
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    projects = projects_result if status == 200 else []
     return render_template('user.html', section='projects', projects=projects)
 
 @app.route('/user/request-project', methods=['POST'])
@@ -632,7 +717,6 @@ def request_project():
         flash('Please provide both title and description', 'danger')
         return redirect(url_for('user_projects'))
     
-    # Create project
     project_data = {
         'user_id': current_user.id,
         'title': title,
@@ -641,9 +725,11 @@ def request_project():
         'created_at': datetime.now().isoformat()
     }
     
-    new_project = backendless_create('Projects', project_data)
+    project_result, status = create_object('Projects', project_data)
     
-    if new_project:
+    if status == 200:
+        project_id = project_result.get('objectId')
+        
         # Add default tracking steps
         default_steps = [
             'Request Received',
@@ -656,22 +742,22 @@ def request_project():
         
         for step in default_steps:
             tracking_data = {
-                'project_id': new_project['objectId'],
+                'project_id': project_id,
                 'step_name': step,
                 'step_status': 'Pending',
-                'updated_at': datetime.now().isoformat()
+                'created_at': datetime.now().isoformat()
             }
-            backendless_create('ProjectTracking', tracking_data)
+            create_object('ProjectTracking', tracking_data)
         
         # Send welcome message
         message_data = {
-            'project_id': new_project['objectId'],
+            'project_id': project_id,
             'sender': 'admin',
             'message': "✅ Welcome! Your project has been created successfully. We'll review your request and get back to you soon.",
             'timestamp': datetime.now().isoformat(),
             'is_read': False
         }
-        backendless_create('Messages', message_data)
+        create_object('Messages', message_data)
         
         flash('Project requested successfully!', 'success')
     else:
@@ -682,27 +768,42 @@ def request_project():
 @app.route('/user/track-projects')
 @login_required
 def user_track_projects():
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    projects = projects_result if status == 200 else []
     
     # Calculate progress for each project
     for project in projects:
-        tracking_steps = backendless_get_all('ProjectTracking', f"project_id='{project['objectId']}'") or []
-        total_steps = len(tracking_steps)
-        completed_steps = len([s for s in tracking_steps if s.get('step_status') == 'Completed'])
-        project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
+        tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project.get('objectId')}'")
+        if track_status == 200 and tracking_result:
+            total_steps = len(tracking_result)
+            completed_steps = len([s for s in tracking_result if s.get('step_status') == 'Completed'])
+            project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
+        else:
+            project['progress'] = 0
     
     return render_template('user.html', section='track', projects=projects)
 
 @app.route('/user/project/<project_id>/track')
 @login_required
 def view_project_tracking(project_id):
-    project = backendless_get_by_id('Projects', project_id)
-    if not project or project.get('user_id') != current_user.id:
+    project_result, status = get_object_by_id('Projects', project_id)
+    
+    if status != 200:
+        flash('Project not found', 'danger')
+        return redirect(url_for('user_dashboard'))
+    
+    # Verify ownership
+    if project_result.get('user_id') != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    tracking_steps = backendless_get_all('ProjectTracking', f"project_id='{project_id}'") or []
-    documents = backendless_get_all('ProjectDocuments', f"project_id='{project_id}'") or []
+    project = project_result
+    
+    tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project_id}'")
+    tracking_steps = tracking_result if track_status == 200 else []
+    
+    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
+    documents = documents_result if doc_status == 200 else []
     
     # Calculate progress
     total_steps = len(tracking_steps)
@@ -719,16 +820,13 @@ def view_project_tracking(project_id):
 @app.route('/user/summarize-documents')
 @login_required
 def user_summarize_documents():
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    projects = projects_result if status == 200 else []
     
-    # Debug print
-    print(f"User {current_user.username} has {len(projects)} projects")
+    # Get documents for each project
     for project in projects:
-        documents = backendless_get_all('ProjectDocuments', f"project_id='{project['objectId']}'") or []
-        project['documents'] = documents
-        print(f"Project {project['objectId']}: {project['title']} has {len(documents)} documents")
-        for doc in documents:
-            print(f"  - Document: {doc.get('file_name')} (Type: {doc.get('file_type')})")
+        docs_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project.get('objectId')}'")
+        project['documents'] = docs_result if doc_status == 200 else []
     
     return render_template('user.html', 
                          section='summarize', 
@@ -737,47 +835,64 @@ def user_summarize_documents():
 @app.route('/user/project/<project_id>/documents')
 @login_required
 def view_project_documents(project_id):
-    project = backendless_get_by_id('Projects', project_id)
-    if not project or project.get('user_id') != current_user.id:
+    project_result, status = get_object_by_id('Projects', project_id)
+    
+    if status != 200:
+        flash('Project not found', 'danger')
+        return redirect(url_for('user_dashboard'))
+    
+    # Verify ownership
+    if project_result.get('user_id') != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    documents = backendless_get_all('ProjectDocuments', f"project_id='{project_id}'") or []
+    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
+    documents = documents_result if doc_status == 200 else []
     
     return render_template('user.html', 
                          section='documents',
-                         project=project,
+                         project=project_result,
                          documents=documents)
 
 @app.route('/user/document/<doc_id>/summarize')
 @login_required
 def summarize_document(doc_id):
-    document = backendless_get_by_id('ProjectDocuments', doc_id)
-    if not document:
+    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    
+    if status != 200:
         flash('Document not found', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    project = backendless_get_by_id('Projects', document['project_id'])
-    if not project or project.get('user_id') != current_user.id:
+    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
+    
+    if proj_status != 200:
+        flash('Project not found', 'danger')
+        return redirect(url_for('user_dashboard'))
+    
+    # Verify ownership
+    if project_result.get('user_id') != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
+    
+    document = document_result
+    project = project_result
     
     # Check if we already have an AI summary
     if document.get('ai_summary') and document.get('key_points') and document.get('tools_technologies'):
         # Parse stored data
         try:
-            key_points = json.loads(document['key_points']) if document.get('key_points') else []
-            tools_technologies = json.loads(document['tools_technologies']) if document.get('tools_technologies') else []
-            technical_jargon = json.loads(document['technical_jargon']) if document.get('technical_jargon') else []
-            summary = document['ai_summary']
+            key_points = json.loads(document.get('key_points')) if document.get('key_points') else []
+            tools_technologies = json.loads(document.get('tools_technologies')) if document.get('tools_technologies') else []
+            technical_jargon = json.loads(document.get('technical_jargon')) if document.get('technical_jargon') else []
+            summary = document.get('ai_summary')
         except:
             key_points = []
             tools_technologies = []
             technical_jargon = []
-            summary = document.get('ai_summary', '')
+            summary = document.get('ai_summary')
     else:
         # Extract text and generate AI summary
-        full_text = extract_text_from_file(document['file_path'], document['file_name'])
+        full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
         
         if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
             ai_result = summarize_with_openrouter(full_text)
@@ -789,7 +904,7 @@ def summarize_document(doc_id):
                 'tools_technologies': json.dumps(ai_result['tools_technologies']),
                 'technical_jargon': json.dumps(ai_result.get('technical_jargon', []))
             }
-            backendless_update('ProjectDocuments', doc_id, update_data)
+            update_object('ProjectDocuments', doc_id, update_data)
             
             key_points = ai_result['key_points']
             tools_technologies = ai_result['tools_technologies']
@@ -802,11 +917,13 @@ def summarize_document(doc_id):
             technical_jargon = []
     
     # Get messages for this project
-    messages = backendless_get_all('Messages', f"project_id='{project['objectId']}'") or []
+    messages_result, msg_status = get_objects('Messages', f"project_id = '{project.get('objectId')}'", page_size=50)
+    messages = messages_result if msg_status == 200 else []
+    # Sort by timestamp
     messages.sort(key=lambda x: x.get('timestamp', ''))
     
     # Get full text for display
-    full_text = extract_text_from_file(document['file_path'], document['file_name'])
+    full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
     
     return render_template('user.html',
                          section='summarize_detail',
@@ -822,16 +939,22 @@ def summarize_document(doc_id):
 @app.route('/user/regenerate-summary/<doc_id>', methods=['POST'])
 @login_required
 def regenerate_summary(doc_id):
-    document = backendless_get_by_id('ProjectDocuments', doc_id)
-    if not document:
+    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    
+    if status != 200:
         return jsonify({'success': False, 'error': 'Document not found'})
     
-    project = backendless_get_by_id('Projects', document['project_id'])
-    if not project or project.get('user_id') != current_user.id:
+    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
+    
+    if proj_status != 200:
+        return jsonify({'success': False, 'error': 'Project not found'})
+    
+    # Verify ownership
+    if project_result.get('user_id') != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
     # Extract text and regenerate AI summary
-    full_text = extract_text_from_file(document['file_path'], document['file_name'])
+    full_text = extract_text_from_file(document_result.get('file_path'), document_result.get('file_name'))
     
     if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
         ai_result = summarize_with_openrouter(full_text)
@@ -843,7 +966,7 @@ def regenerate_summary(doc_id):
             'tools_technologies': json.dumps(ai_result['tools_technologies']),
             'technical_jargon': json.dumps(ai_result.get('technical_jargon', []))
         }
-        backendless_update('ProjectDocuments', doc_id, update_data)
+        update_object('ProjectDocuments', doc_id, update_data)
         
         return jsonify({
             'success': True,
@@ -861,31 +984,41 @@ def regenerate_summary(doc_id):
 @app.route('/user/download-summary/<doc_id>')
 @login_required
 def download_summary_pdf(doc_id):
-    document = backendless_get_by_id('ProjectDocuments', doc_id)
-    if not document:
+    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    
+    if status != 200:
         flash('Document not found', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    project = backendless_get_by_id('Projects', document['project_id'])
-    if not project or project.get('user_id') != current_user.id:
+    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
+    
+    if proj_status != 200:
+        flash('Project not found', 'danger')
+        return redirect(url_for('user_dashboard'))
+    
+    # Verify ownership
+    if project_result.get('user_id') != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
+    
+    document = document_result
+    project = project_result
     
     # Get the summary data
     if document.get('ai_summary') and document.get('key_points') and document.get('tools_technologies'):
         try:
-            key_points = json.loads(document['key_points']) if document.get('key_points') else []
-            tools_technologies = json.loads(document['tools_technologies']) if document.get('tools_technologies') else []
-            technical_jargon = json.loads(document['technical_jargon']) if document.get('technical_jargon') else []
-            summary = document['ai_summary']
+            key_points = json.loads(document.get('key_points')) if document.get('key_points') else []
+            tools_technologies = json.loads(document.get('tools_technologies')) if document.get('tools_technologies') else []
+            technical_jargon = json.loads(document.get('technical_jargon')) if document.get('technical_jargon') else []
+            summary = document.get('ai_summary')
         except:
             key_points = []
             tools_technologies = []
             technical_jargon = []
-            summary = document.get('ai_summary', '')
+            summary = document.get('ai_summary')
     else:
         # If no AI summary exists, generate it
-        full_text = extract_text_from_file(document['file_path'], document['file_name'])
+        full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
         if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
             ai_result = summarize_with_openrouter(full_text)
             summary = ai_result['summary']
@@ -898,65 +1031,99 @@ def download_summary_pdf(doc_id):
             tools_technologies = []
             technical_jargon = []
     
-    # Create PDF
+    # Create PDF with Unicode support
     pdf = FPDF()
     pdf.add_page()
     
-    # Set font
-    pdf.set_font("Arial", "B", 16)
+    # Set auto page break
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Add a Unicode font (using built-in fonts with proper encoding)
+    pdf.set_font("Helvetica", "B", 16)
     
     # Title
     pdf.cell(200, 10, "ProjectFlow - AI Document Summary", ln=True, align="C")
     pdf.ln(10)
     
-    # Document info
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(200, 10, f"Document: {document.get('file_name', 'Unknown')}", ln=True)
-    pdf.set_font("Arial", "", 10)
-    pdf.cell(200, 10, f"Project: {project.get('title', 'Unknown')}", ln=True)
+    # Document info - clean text for PDF
+    pdf.set_font("Helvetica", "B", 12)
+    safe_file_name = clean_text_for_pdf(document.get('file_name', 'Unknown'))
+    pdf.cell(200, 10, f"Document: {safe_file_name}", ln=True)
+    
+    pdf.set_font("Helvetica", "", 10)
+    safe_project_title = clean_text_for_pdf(project.get('title', 'Unknown'))
+    pdf.cell(200, 10, f"Project: {safe_project_title}", ln=True)
     pdf.cell(200, 10, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
     pdf.ln(10)
     
     # AI Summary
-    pdf.set_font("Arial", "B", 14)
+    pdf.set_font("Helvetica", "B", 14)
     pdf.cell(200, 10, "AI-Generated Technical Summary", ln=True)
-    pdf.set_font("Arial", "", 11)
-    pdf.multi_cell(0, 5, summary)
+    pdf.set_font("Helvetica", "", 11)
+    safe_summary = clean_text_for_pdf(summary)
+    pdf.multi_cell(0, 5, safe_summary)
     pdf.ln(5)
     
     # Key Points
     if key_points:
-        pdf.set_font("Arial", "B", 14)
+        pdf.set_font("Helvetica", "B", 14)
         pdf.cell(200, 10, f"Key Findings & Insights ({len(key_points)} points)", ln=True)
-        pdf.set_font("Arial", "", 11)
+        pdf.set_font("Helvetica", "", 11)
         for i, point in enumerate(key_points, 1):
-            pdf.multi_cell(0, 5, f"{i}. {point}")
+            safe_point = clean_text_for_pdf(point)
+            safe_point = safe_point.replace('•', '-').replace('●', '-').replace('○', '-')
+            pdf.multi_cell(0, 5, f"{i}. {safe_point}")
         pdf.ln(5)
     
     # Tools & Technologies
     if tools_technologies and tools_technologies[0] != "No tools or technologies identified.":
-        pdf.set_font("Arial", "B", 14)
+        pdf.set_font("Helvetica", "B", 14)
         pdf.cell(200, 10, "Tools & Technologies Identified", ln=True)
-        pdf.set_font("Arial", "", 11)
+        pdf.set_font("Helvetica", "", 11)
         for tool in tools_technologies:
-            pdf.multi_cell(0, 5, f"• {tool}")
+            safe_tool = clean_text_for_pdf(tool)
+            safe_tool = safe_tool.replace('•', '-').replace('●', '-').replace('○', '-')
+            pdf.multi_cell(0, 5, f"- {safe_tool}")
         pdf.ln(5)
     
     # Technical Jargon
     if technical_jargon:
-        pdf.set_font("Arial", "B", 14)
+        pdf.set_font("Helvetica", "B", 14)
         pdf.cell(200, 10, "Technical Terminology", ln=True)
-        pdf.set_font("Arial", "", 11)
+        pdf.set_font("Helvetica", "", 11)
         for term in technical_jargon:
-            pdf.multi_cell(0, 5, f"• {term}")
+            safe_term = clean_text_for_pdf(term)
+            safe_term = safe_term.replace('•', '-').replace('●', '-').replace('○', '-')
+            pdf.multi_cell(0, 5, f"- {safe_term}")
         pdf.ln(5)
     
     # Generate filename for download
     safe_filename = secure_filename(document.get('file_name', 'document')).replace('.', '_')
     download_filename = f"summary_{safe_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     
+    # Output PDF to a temporary file first (to avoid encoding issues)
+    try:
+        # Try to output directly
+        pdf_output = pdf.output(dest='S')
+        # Try to encode to Latin-1
+        try:
+            pdf_bytes = pdf_output.encode('latin-1')
+        except UnicodeEncodeError:
+            # If direct encoding fails, try with replacement
+            pdf_bytes = pdf_output.encode('latin-1', errors='replace')
+    except Exception as e:
+        # If all else fails, create a simple error PDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(200, 10, "Error Generating PDF", ln=True, align="C")
+        pdf.ln(10)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.multi_cell(0, 10, "An error occurred while generating the PDF. Please try again.")
+        pdf_bytes = pdf.output(dest='S').encode('latin-1', errors='replace')
+    
     # Create response
-    response = make_response(pdf.output(dest='S').encode('latin-1'))
+    response = make_response(pdf_bytes)
     response.headers['Content-Type'] = 'application/pdf'
     response.headers['Content-Disposition'] = f'attachment; filename={download_filename}'
     
@@ -971,8 +1138,9 @@ def send_message():
     if not project_id or not message_text:
         return jsonify({'success': False, 'error': 'Missing data'})
     
-    project = backendless_get_by_id('Projects', project_id)
-    if not project or project.get('user_id') != current_user.id:
+    # Verify project ownership
+    project_result, status = get_object_by_id('Projects', project_id)
+    if status != 200 or project_result.get('user_id') != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
     message_data = {
@@ -983,9 +1151,9 @@ def send_message():
         'is_read': False
     }
     
-    result = backendless_create('Messages', message_data)
+    result, msg_status = create_object('Messages', message_data)
     
-    if result:
+    if msg_status == 200:
         return jsonify({
             'success': True, 
             'message': message_text, 
@@ -997,27 +1165,30 @@ def send_message():
 @app.route('/user/chat')
 @login_required
 def user_chat():
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    projects = projects_result if status == 200 else []
+    
     messages_dict = {}
     unread_counts = {}
     
-    print(f"Loading chat for user {current_user.username}")  # Debug
-    print(f"Found {len(projects)} projects")  # Debug
+    print(f"Loading chat for user {current_user.username}")
+    print(f"Found {len(projects)} projects")
     
     for project in projects:
+        project_id = project.get('objectId')
         # Get all messages for this project
-        project_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}'") or []
-        if project_messages:
-            project_messages.sort(key=lambda x: x.get('timestamp', ''))
-            messages_dict[project['objectId']] = project_messages
-            print(f"Project {project['objectId']} ({project['title']}) has {len(project_messages)} messages")  # Debug
+        messages_result, msg_status = get_objects('Messages', f"project_id = '{project_id}'", page_size=100)
+        
+        if msg_status == 200 and messages_result:
+            # Sort by timestamp
+            sorted_messages = sorted(messages_result, key=lambda x: x.get('timestamp', ''))
+            messages_dict[project_id] = sorted_messages
+            print(f"Project {project_id} ({project.get('title')}) has {len(sorted_messages)} messages")
         
         # Count unread admin messages
-        unread_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='admin' AND is_read=false") or []
-        unread_counts[project['objectId']] = len(unread_messages)
-    
-    print(f"Messages dict has {len(messages_dict)} projects with messages")  # Debug
-    print(f"Unread counts: {unread_counts}")  # Debug
+        unread_result, unread_status = get_objects('Messages', 
+            f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
+        unread_counts[project_id] = len(unread_result) if unread_status == 200 else 0
     
     return render_template('user.html', 
                          section='chat', 
@@ -1028,42 +1199,57 @@ def user_chat():
 @app.route('/user/mark-messages-read/<project_id>', methods=['POST'])
 @login_required
 def mark_messages_read(project_id):
-    project = backendless_get_by_id('Projects', project_id)
-    if not project or project.get('user_id') != current_user.id:
+    # Verify project ownership
+    project_result, status = get_object_by_id('Projects', project_id)
+    if status != 200 or project_result.get('user_id') != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
     # Get all unread admin messages
-    unread_messages = backendless_get_all('Messages', f"project_id='{project_id}' AND sender='admin' AND is_read=false") or []
+    messages_result, msg_status = get_objects('Messages', 
+        f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
     
-    # Mark each as read
-    for msg in unread_messages:
-        backendless_update('Messages', msg['objectId'], {'is_read': True})
+    if msg_status == 200 and messages_result:
+        for message in messages_result:
+            update_object('Messages', message.get('objectId'), {'is_read': True})
     
     return jsonify({'success': True})
 
 @app.route('/user/get-unread-counts')
 @login_required
 def user_get_unread_counts():
-    projects = backendless_get_all('Projects', f"user_id='{current_user.id}'") or []
+    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
+    projects = projects_result if status == 200 else []
+    
     unread_counts = {}
     
     for project in projects:
-        unread_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='admin' AND is_read=false") or []
-        unread_counts[project['objectId']] = len(unread_messages)
+        project_id = project.get('objectId')
+        messages_result, msg_status = get_objects('Messages', 
+            f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
+        unread_counts[project_id] = len(messages_result) if msg_status == 200 else 0
     
     return jsonify(unread_counts)
 
 @app.route('/user/contact')
 @login_required
 def user_contact():
-    contact_list = backendless_get_all('ContactDetails') or []
-    contact = contact_list[0] if contact_list else None
-    team_members = backendless_get_all('TeamMembers') or []
+    # Get contact details (first record)
+    contact_result, status = get_objects('ContactDetails', page_size=1)
+    contact = contact_result[0] if status == 200 and contact_result else None
+    
+    # Get team members
+    team_result, team_status = get_objects('TeamMembers')
+    team_members = team_result if team_status == 200 else []
+    
     return render_template('user.html', section='contact', contact=contact, team_members=team_members)
 
 @app.route('/user/profile')
 @login_required
 def user_profile():
+    # Get fresh user data from Backendless
+    user_result, status = get_object_by_id('Users', current_user.id)
+    if status == 200:
+        current_user.profile_photo = user_result.get('profile_photo')
     return render_template('user.html', section='profile', user=current_user)
 
 @app.route('/user/update-profile', methods=['POST'])
@@ -1081,29 +1267,22 @@ def update_profile():
     
     if file and allowed_file(file.filename):
         # Upload to Backendless
-        filename, file_url = backendless_upload_file(file, 'profile_photos')
+        upload_result = upload_file_to_backendless(file, 'profile_photos')
         
-        if filename:
-            # Save to local as backup
-            profile_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos')
-            full_path = os.path.join(profile_photos_dir, filename)
-            os.makedirs(profile_photos_dir, exist_ok=True)
-            file.seek(0)  # Reset file pointer
-            file.save(full_path)
+        if upload_result.get('success'):
+            filename = upload_result.get('filename')
             
-            # Update user in Backendless
+            # Update user record in Backendless
             update_data = {'profile_photo': filename}
-            backendless_update('Users', current_user.id, update_data)
+            result, status = update_object('Users', current_user.id, update_data)
             
-            # Update current_user object
-            current_user.profile_photo = filename
-            
-            print(f"✅ Profile photo saved: {filename}")
-            print(f"✅ File exists locally: {os.path.exists(full_path)}")
-            
-            flash('Profile photo updated successfully!', 'success')
+            if status == 200:
+                current_user.profile_photo = filename
+                flash('Profile photo updated successfully!', 'success')
+            else:
+                flash('Failed to update profile in database', 'danger')
         else:
-            flash('Failed to upload photo to cloud', 'danger')
+            flash('Failed to upload file', 'danger')
     else:
         flash('Invalid file type. Please upload an image (PNG, JPG, JPEG, GIF).', 'danger')
     
@@ -1129,22 +1308,26 @@ def user_change_password():
         return redirect(url_for('user_profile'))
     
     # Update password in Backendless
-    hashed_password = generate_password_hash(new_password)
-    update_data = {'password': hashed_password}
-    result = backendless_update('Users', current_user.id, update_data)
+    update_data = {'password': generate_password_hash(new_password)}
+    result, status = update_object('Users', current_user.id, update_data)
     
-    if result:
+    if status == 200:
         flash('Password changed successfully!', 'success')
     else:
         flash('Failed to update password', 'danger')
     
     return redirect(url_for('user_profile'))
 
-# Admin Routes
+# ============================================================================
+# ADMIN ROUTES
+# ============================================================================
+
 @app.route('/admin/dashboard')
 @admin_required
 def admin_dashboard():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
+    
     total_projects = len(projects)
     accepted = len([p for p in projects if p.get('status') == 'Accepted'])
     rejected = len([p for p in projects if p.get('status') == 'Rejected'])
@@ -1153,8 +1336,9 @@ def admin_dashboard():
     
     # Get unread message counts
     for project in projects:
-        unread_user_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='user' AND is_read=false") or []
-        project['unread_user_messages'] = len(unread_user_messages)
+        messages_result, msg_status = get_objects('Messages', 
+            f"project_id = '{project.get('objectId')}' AND sender = 'user' AND is_read = false")
+        project['unread_user_messages'] = len(messages_result) if msg_status == 200 else 0
     
     return render_template('admin.html',
                          section='dashboard',
@@ -1168,30 +1352,33 @@ def admin_dashboard():
 @app.route('/admin/manage-projects')
 @admin_required
 def admin_manage_projects():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
     
     # Get message counts for each project
     for project in projects:
-        unread_user_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='user' AND is_read=false") or []
-        project['unread_user_messages'] = len(unread_user_messages)
+        messages_result, msg_status = get_objects('Messages', 
+            f"project_id = '{project.get('objectId')}' AND sender = 'user' AND is_read = false")
+        project['unread_user_messages'] = len(messages_result) if msg_status == 200 else 0
     
     return render_template('admin.html', section='manage_projects', projects=projects)
 
 @app.route('/admin/update-project-status/<project_id>/<status>')
 @admin_required
 def update_project_status(project_id, status):
-    project = backendless_get_by_id('Projects', project_id)
-    if not project:
+    project_result, proj_status = get_object_by_id('Projects', project_id)
+    
+    if proj_status != 200:
         flash('Project not found', 'danger')
         return redirect(url_for('admin_manage_projects'))
     
-    old_status = project.get('status')
+    old_status = project_result.get('status')
     
     # Update project status
     update_data = {'status': status}
-    result = backendless_update('Projects', project_id, update_data)
+    result, update_status = update_object('Projects', project_id, update_data)
     
-    if result:
+    if update_status == 200:
         # Send automatic message about status change
         status_messages = {
             'Accepted': '✅ Your project has been accepted! We will start working on it soon.',
@@ -1208,7 +1395,7 @@ def update_project_status(project_id, status):
                 'timestamp': datetime.now().isoformat(),
                 'is_read': False
             }
-            backendless_create('Messages', message_data)
+            create_object('Messages', message_data)
         
         flash(f'Project status updated to {status}', 'success')
     else:
@@ -1219,27 +1406,35 @@ def update_project_status(project_id, status):
 @app.route('/admin/update-tracking')
 @admin_required
 def admin_update_tracking():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
     
     # Calculate progress for each project
     for project in projects:
-        tracking_steps = backendless_get_all('ProjectTracking', f"project_id='{project['objectId']}'") or []
-        total_steps = len(tracking_steps)
-        completed_steps = len([s for s in tracking_steps if s.get('step_status') == 'Completed'])
-        project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
+        tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project.get('objectId')}'")
+        if track_status == 200 and tracking_result:
+            total_steps = len(tracking_result)
+            completed_steps = len([s for s in tracking_result if s.get('step_status') == 'Completed'])
+            project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
+        else:
+            project['progress'] = 0
     
     return render_template('admin.html', section='update_tracking', projects=projects)
 
 @app.route('/admin/project/<project_id>/tracking')
 @admin_required
 def view_project_tracking_admin(project_id):
-    project = backendless_get_by_id('Projects', project_id)
-    if not project:
-        flash('Project not found', 'danger')
-        return redirect(url_for('admin_update_tracking'))
+    project_result, status = get_object_by_id('Projects', project_id)
     
-    tracking_steps = backendless_get_all('ProjectTracking', f"project_id='{project_id}'") or []
-    documents = backendless_get_all('ProjectDocuments', f"project_id='{project_id}'") or []
+    if status != 200:
+        flash('Project not found', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    
+    tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project_id}'")
+    tracking_steps = tracking_result if track_status == 200 else []
+    
+    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
+    documents = documents_result if doc_status == 200 else []
     
     # Calculate progress
     total_steps = len(tracking_steps)
@@ -1248,7 +1443,7 @@ def view_project_tracking_admin(project_id):
     
     return render_template('admin.html', 
                          section='tracking_detail',
-                         project=project,
+                         project=project_result,
                          tracking_steps=tracking_steps,
                          documents=documents,
                          progress=progress)
@@ -1267,12 +1462,12 @@ def add_tracking_step():
         'project_id': project_id,
         'step_name': step_name,
         'step_status': 'Pending',
-        'updated_at': datetime.now().isoformat()
+        'created_at': datetime.now().isoformat()
     }
     
-    result = backendless_create('ProjectTracking', tracking_data)
+    result, status = create_object('ProjectTracking', tracking_data)
     
-    if result:
+    if status == 200:
         # Notify user about new tracking step
         message_data = {
             'project_id': project_id,
@@ -1281,7 +1476,7 @@ def add_tracking_step():
             'timestamp': datetime.now().isoformat(),
             'is_read': False
         }
-        backendless_create('Messages', message_data)
+        create_object('Messages', message_data)
         
         flash('Tracking step added successfully!', 'success')
     else:
@@ -1292,100 +1487,101 @@ def add_tracking_step():
 @app.route('/admin/update-step-status/<step_id>', methods=['POST'])
 @admin_required
 def update_step_status(step_id):
-    step = backendless_get_by_id('ProjectTracking', step_id)
-    if not step:
+    step_result, status = get_object_by_id('ProjectTracking', step_id)
+    
+    if status != 200:
         flash('Step not found', 'danger')
-        return redirect(url_for('admin_update_tracking'))
+        return redirect(url_for('admin_dashboard'))
     
-    status = request.form.get('status')
-    old_status = step.get('step_status')
+    new_status = request.form.get('status')
+    old_status = step_result.get('step_status')
     
-    update_data = {
-        'step_status': status,
-        'updated_at': datetime.now().isoformat()
-    }
-    
-    proof_filenames = []
-    image_filenames = []
+    update_data = {'step_status': new_status}
     
     # Handle file uploads
+    proof_filenames = []
     if 'proof_file' in request.files:
         files = request.files.getlist('proof_file')
         for file in files:
             if file and allowed_file(file.filename):
-                filename, file_url = backendless_upload_file(file, 'project_documents')
-                if filename:
+                upload_result = upload_file_to_backendless(file, 'project_documents')
+                if upload_result.get('success'):
+                    filename = upload_result.get('filename')
                     proof_filenames.append(filename)
                     
-                    # Also add to ProjectDocuments table
-                    document_data = {
-                        'project_id': step['project_id'],
+                    # Add to ProjectDocuments
+                    doc_data = {
+                        'project_id': step_result.get('project_id'),
                         'file_name': file.filename,
                         'file_path': filename,
                         'file_type': 'proof',
                         'uploaded_at': datetime.now().isoformat()
                     }
-                    backendless_create('ProjectDocuments', document_data)
-                    print(f"✅ Added proof file: {filename}")
+                    create_object('ProjectDocuments', doc_data)
     
+    if proof_filenames:
+        existing_files = step_result.get('proof_files', '')
+        if existing_files:
+            update_data['proof_files'] = existing_files + ',' + ','.join(proof_filenames)
+        else:
+            update_data['proof_files'] = ','.join(proof_filenames)
+    
+    image_filenames = []
     if 'images' in request.files:
         images = request.files.getlist('images')
         for image in images:
             if image and allowed_file(image.filename):
-                filename, file_url = backendless_upload_file(image, 'project_documents')
-                if filename:
+                upload_result = upload_file_to_backendless(image, 'project_documents')
+                if upload_result.get('success'):
+                    filename = upload_result.get('filename')
                     image_filenames.append(filename)
                     
-                    # Also add to ProjectDocuments table
-                    document_data = {
-                        'project_id': step['project_id'],
+                    # Add to ProjectDocuments
+                    doc_data = {
+                        'project_id': step_result.get('project_id'),
                         'file_name': image.filename,
                         'file_path': filename,
                         'file_type': 'image',
                         'uploaded_at': datetime.now().isoformat()
                     }
-                    backendless_create('ProjectDocuments', document_data)
-                    print(f"✅ Added image: {filename}")
-    
-    if proof_filenames:
-        existing_proofs = step.get('proof_files', '')
-        if existing_proofs:
-            update_data['proof_files'] = existing_proofs + ',' + ','.join(proof_filenames)
-        else:
-            update_data['proof_files'] = ','.join(proof_filenames)
+                    create_object('ProjectDocuments', doc_data)
     
     if image_filenames:
-        existing_images = step.get('images', '')
+        existing_images = step_result.get('images', '')
         if existing_images:
             update_data['images'] = existing_images + ',' + ','.join(image_filenames)
         else:
             update_data['images'] = ','.join(image_filenames)
     
-    result = backendless_update('ProjectTracking', step_id, update_data)
+    update_data['updated_at'] = datetime.now().isoformat()
     
-    if result:
+    result, update_status = update_object('ProjectTracking', step_id, update_data)
+    
+    if update_status == 200 and old_status != new_status:
         # Notify user about step status change
-        if old_status != status:
-            status_icon = '✅' if status == 'Completed' else '⏳'
-            message_data = {
-                'project_id': step['project_id'],
-                'sender': 'admin',
-                'message': f"{status_icon} Tracking step '{step['step_name']}' is now {status}.",
-                'timestamp': datetime.now().isoformat(),
-                'is_read': False
-            }
-            backendless_create('Messages', message_data)
+        status_icon = '✅' if new_status == 'Completed' else '⏳'
+        message_data = {
+            'project_id': step_result.get('project_id'),
+            'sender': 'admin',
+            'message': f"{status_icon} Tracking step '{step_result.get('step_name')}' is now {new_status}.",
+            'timestamp': datetime.now().isoformat(),
+            'is_read': False
+        }
+        create_object('Messages', message_data)
         
+        flash('Step updated successfully!', 'success')
+    elif update_status == 200:
         flash('Step updated successfully!', 'success')
     else:
         flash('Failed to update step', 'danger')
     
-    return redirect(url_for('view_project_tracking_admin', project_id=step['project_id']))
+    return redirect(url_for('view_project_tracking_admin', project_id=step_result.get('project_id')))
 
 @app.route('/admin/upload-documents')
 @admin_required
 def admin_upload_documents():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
     return render_template('admin.html', section='upload_documents', projects=projects)
 
 @app.route('/admin/upload-project-document', methods=['POST'])
@@ -1404,18 +1600,13 @@ def upload_project_document():
     file = request.files['document']
     if file and allowed_file(file.filename):
         # Upload to Backendless
-        filename, file_url = backendless_upload_file(file, 'project_documents')
+        upload_result = upload_file_to_backendless(file, 'project_documents')
         
-        if filename:
-            # Save locally as backup
-            project_docs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents')
-            full_path = os.path.join(project_docs_dir, filename)
-            os.makedirs(project_docs_dir, exist_ok=True)
-            file.seek(0)  # Reset file pointer
-            file.save(full_path)
+        if upload_result.get('success'):
+            filename = upload_result.get('filename')
             
-            # Store in Backendless database
-            document_data = {
+            # Store in ProjectDocuments
+            doc_data = {
                 'project_id': project_id,
                 'file_name': file.filename,
                 'file_path': filename,
@@ -1423,11 +1614,9 @@ def upload_project_document():
                 'uploaded_at': datetime.now().isoformat()
             }
             
-            result = backendless_create('ProjectDocuments', document_data)
+            result, doc_status = create_object('ProjectDocuments', doc_data)
             
-            if result:
-                print(f"✅ Document saved: ID={result.get('objectId')}, Name={file.filename}, Filename={filename}")
-                
+            if doc_status == 200:
                 # Notify user about new document
                 message_data = {
                     'project_id': project_id,
@@ -1436,35 +1625,107 @@ def upload_project_document():
                     'timestamp': datetime.now().isoformat(),
                     'is_read': False
                 }
-                backendless_create('Messages', message_data)
+                create_object('Messages', message_data)
                 
                 flash('Document uploaded successfully!', 'success')
             else:
-                flash('Document uploaded but failed to save metadata', 'warning')
+                flash('Failed to save document record', 'danger')
         else:
-            flash('Failed to upload document', 'danger')
+            flash('Failed to upload file', 'danger')
     else:
         flash('Invalid file type. Allowed: PDF, DOC, DOCX, TXT, images', 'danger')
     
     return redirect(url_for('admin_upload_documents'))
 
+@app.route('/admin/fix-documents')
+@admin_required
+def fix_documents():
+    # This function is less critical now with Backendless,
+    # but we'll keep a simplified version for local file cleanup
+    
+    tracking_result, status = get_objects('ProjectTracking', page_size=100)
+    tracking_steps = tracking_result if status == 200 else []
+    
+    fixed_count = 0
+    project_files = {}
+    
+    # Check for files in tracking that aren't in ProjectDocuments
+    for step in tracking_steps:
+        project_id = step.get('project_id')
+        if project_id not in project_files:
+            project_files[project_id] = {
+                'proof': [],
+                'images': []
+            }
+        
+        # Check proof files
+        if step.get('proof_files'):
+            files = step.get('proof_files').split(',')
+            for filename in files:
+                if filename and filename.strip():
+                    # Check if exists in ProjectDocuments
+                    docs_result, doc_status = get_objects('ProjectDocuments', f"file_path = '{filename}'")
+                    if doc_status != 200 or not docs_result:
+                        # Add missing document
+                        doc_data = {
+                            'project_id': project_id,
+                            'file_name': filename.split('/')[-1],
+                            'file_path': filename,
+                            'file_type': 'proof',
+                            'uploaded_at': step.get('updated_at') or datetime.now().isoformat()
+                        }
+                        create_object('ProjectDocuments', doc_data)
+                        fixed_count += 1
+                        project_files[project_id]['proof'].append(filename)
+        
+        # Check images
+        if step.get('images'):
+            images = step.get('images').split(',')
+            for filename in images:
+                if filename and filename.strip():
+                    docs_result, doc_status = get_objects('ProjectDocuments', f"file_path = '{filename}'")
+                    if doc_status != 200 or not docs_result:
+                        doc_data = {
+                            'project_id': project_id,
+                            'file_name': filename.split('/')[-1],
+                            'file_path': filename,
+                            'file_type': 'image',
+                            'uploaded_at': step.get('updated_at') or datetime.now().isoformat()
+                        }
+                        create_object('ProjectDocuments', doc_data)
+                        fixed_count += 1
+                        project_files[project_id]['images'].append(filename)
+    
+    if fixed_count > 0:
+        flash(f'✅ Fixed {fixed_count} missing documents in Backendless!', 'success')
+    else:
+        flash('No missing documents found.', 'info')
+    
+    return redirect(url_for('admin_dashboard'))
+
 @app.route('/admin/messages')
 @admin_required
 def admin_messages():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
+    
     messages_dict = {}
     unread_counts = {}
     
     for project in projects:
+        project_id = project.get('objectId')
         # Get all messages for this project
-        project_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}'") or []
-        if project_messages:
-            project_messages.sort(key=lambda x: x.get('timestamp', ''))
-            messages_dict[project['objectId']] = project_messages
+        messages_result, msg_status = get_objects('Messages', f"project_id = '{project_id}'", page_size=100)
+        
+        if msg_status == 200 and messages_result:
+            # Sort by timestamp
+            sorted_messages = sorted(messages_result, key=lambda x: x.get('timestamp', ''))
+            messages_dict[project_id] = sorted_messages
         
         # Count unread user messages
-        unread_user_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='user' AND is_read=false") or []
-        unread_counts[project['objectId']] = len(unread_user_messages)
+        unread_result, unread_status = get_objects('Messages', 
+            f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
+        unread_counts[project_id] = len(unread_result) if unread_status == 200 else 0
     
     return render_template('admin.html', 
                          section='messages', 
@@ -1489,43 +1750,59 @@ def send_reply():
         'is_read': False
     }
     
-    result = backendless_create('Messages', message_data)
+    result, status = create_object('Messages', message_data)
     
-    return jsonify({'success': bool(result)})
+    if status == 200:
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Failed to send message'})
 
 @app.route('/admin/mark-messages-read/<project_id>', methods=['POST'])
 @admin_required
 def admin_mark_messages_read(project_id):
     # Get all unread user messages
-    unread_messages = backendless_get_all('Messages', f"project_id='{project_id}' AND sender='user' AND is_read=false") or []
+    messages_result, msg_status = get_objects('Messages', 
+        f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
     
-    # Mark each as read
-    for msg in unread_messages:
-        backendless_update('Messages', msg['objectId'], {'is_read': True})
+    if msg_status == 200 and messages_result:
+        for message in messages_result:
+            update_object('Messages', message.get('objectId'), {'is_read': True})
     
     return jsonify({'success': True})
 
 @app.route('/admin/get-unread-counts')
 @admin_required
 def admin_get_unread_counts():
-    projects = backendless_get_all('Projects') or []
+    projects_result, status = get_objects('Projects', page_size=100)
+    projects = projects_result if status == 200 else []
+    
     unread_counts = {}
     
     for project in projects:
-        unread_user_messages = backendless_get_all('Messages', f"project_id='{project['objectId']}' AND sender='user' AND is_read=false") or []
-        unread_counts[project['objectId']] = len(unread_user_messages)
+        project_id = project.get('objectId')
+        messages_result, msg_status = get_objects('Messages', 
+            f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
+        unread_counts[project_id] = len(messages_result) if msg_status == 200 else 0
     
     return jsonify(unread_counts)
 
 @app.route('/admin/contact-details')
 @admin_required
 def admin_contact_details():
-    contact_list = backendless_get_all('ContactDetails') or []
-    contact = contact_list[0] if contact_list else None
-    team_members = backendless_get_all('TeamMembers') or []
+    # Get contact details (first record)
+    contact_result, status = get_objects('ContactDetails', page_size=1)
+    contact = contact_result[0] if status == 200 and contact_result else None
+    
+    # Get team members
+    team_result, team_status = get_objects('TeamMembers')
+    team_members = team_result if team_status == 200 else []
+    
     return render_template('admin.html', section='contact_details', contact=contact, team_members=team_members)
 
-# Team Member Management Routes
+# ============================================================================
+# TEAM MEMBER MANAGEMENT ROUTES
+# ============================================================================
+
 @app.route('/admin/add-team-member', methods=['POST'])
 @admin_required
 def add_team_member():
@@ -1543,17 +1820,11 @@ def add_team_member():
     if 'photo' in request.files:
         file = request.files['photo']
         if file and file.filename and allowed_file(file.filename):
-            filename, file_url = backendless_upload_file(file, 'team_photos')
-            if filename:
-                # Save locally as backup
-                team_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos')
-                full_path = os.path.join(team_photos_dir, filename)
-                os.makedirs(team_photos_dir, exist_ok=True)
-                file.seek(0)
-                file.save(full_path)
-                photo_filename = filename
+            upload_result = upload_file_to_backendless(file, 'team_photos')
+            if upload_result.get('success'):
+                photo_filename = upload_result.get('filename')
     
-    # Create team member in Backendless
+    # Create new team member
     member_data = {
         'name': name,
         'role': role,
@@ -1563,9 +1834,9 @@ def add_team_member():
         'created_at': datetime.now().isoformat()
     }
     
-    result = backendless_create('TeamMembers', member_data)
+    result, status = create_object('TeamMembers', member_data)
     
-    if result:
+    if status == 200:
         flash(f'Team member {name} added successfully!', 'success')
     else:
         flash('Failed to add team member', 'danger')
@@ -1575,41 +1846,36 @@ def add_team_member():
 @app.route('/admin/edit-team-member/<member_id>', methods=['POST'])
 @admin_required
 def edit_team_member(member_id):
-    member = backendless_get_by_id('TeamMembers', member_id)
-    if not member:
+    member_result, status = get_object_by_id('TeamMembers', member_id)
+    
+    if status != 200:
         flash('Team member not found', 'danger')
         return redirect(url_for('admin_contact_details'))
     
     update_data = {
-        'name': request.form.get('name', member.get('name')),
-        'role': request.form.get('role', member.get('role')),
-        'email': request.form.get('email', member.get('email')),
-        'mobile': request.form.get('mobile', member.get('mobile'))
+        'name': request.form.get('name', member_result.get('name')),
+        'role': request.form.get('role', member_result.get('role')),
+        'email': request.form.get('email', member_result.get('email')),
+        'mobile': request.form.get('mobile', member_result.get('mobile'))
     }
     
     # Handle photo upload
     if 'photo' in request.files:
         file = request.files['photo']
         if file and file.filename and allowed_file(file.filename):
-            filename, file_url = backendless_upload_file(file, 'team_photos')
-            if filename:
-                # Save locally as backup
-                team_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos')
-                full_path = os.path.join(team_photos_dir, filename)
-                os.makedirs(team_photos_dir, exist_ok=True)
-                file.seek(0)
-                file.save(full_path)
-                update_data['photo'] = filename
+            upload_result = upload_file_to_backendless(file, 'team_photos')
+            if upload_result.get('success'):
+                update_data['photo'] = upload_result.get('filename')
                 
-                # Delete old photo if exists
-                if member.get('photo'):
-                    old_path = os.path.join(team_photos_dir, member['photo'])
+                # Delete old photo if exists locally
+                if member_result.get('photo'):
+                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member_result.get('photo'))
                     if os.path.exists(old_path):
                         os.remove(old_path)
     
-    result = backendless_update('TeamMembers', member_id, update_data)
+    result, update_status = update_object('TeamMembers', member_id, update_data)
     
-    if result:
+    if update_status == 200:
         flash(f'Team member updated successfully!', 'success')
     else:
         flash('Failed to update team member', 'danger')
@@ -1619,17 +1885,17 @@ def edit_team_member(member_id):
 @app.route('/admin/delete-team-member/<member_id>', methods=['POST'])
 @admin_required
 def delete_team_member(member_id):
-    member = backendless_get_by_id('TeamMembers', member_id)
+    member_result, status = get_object_by_id('TeamMembers', member_id)
     
-    # Delete photo if exists locally
-    if member and member.get('photo'):
-        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member['photo'])
+    if status == 200 and member_result.get('photo'):
+        # Delete photo if exists locally
+        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member_result.get('photo'))
         if os.path.exists(photo_path):
             os.remove(photo_path)
     
-    result = backendless_delete('TeamMembers', member_id)
+    result, delete_status = delete_object('TeamMembers', member_id)
     
-    if result:
+    if delete_status == 200:
         flash(f'Team member deleted successfully!', 'success')
     else:
         flash('Failed to delete team member', 'danger')
@@ -1639,44 +1905,55 @@ def delete_team_member(member_id):
 @app.route('/admin/get-team-member/<member_id>')
 @admin_required
 def get_team_member(member_id):
-    member = backendless_get_by_id('TeamMembers', member_id)
-    if member:
+    member_result, status = get_object_by_id('TeamMembers', member_id)
+    
+    if status == 200:
         return jsonify({
-            'id': member['objectId'],
-            'name': member.get('name'),
-            'role': member.get('role'),
-            'email': member.get('email'),
-            'mobile': member.get('mobile'),
-            'photo': member.get('photo')
+            'id': member_id,
+            'name': member_result.get('name'),
+            'role': member_result.get('role'),
+            'email': member_result.get('email'),
+            'mobile': member_result.get('mobile'),
+            'photo': member_result.get('photo')
         })
-    return jsonify({'error': 'Member not found'}), 404
+    else:
+        return jsonify({'error': 'Member not found'}), 404
 
 @app.route('/admin/update-contact', methods=['POST'])
 @admin_required
 def update_contact():
-    contact_list = backendless_get_all('ContactDetails') or []
+    email = request.form.get('email')
+    phone = request.form.get('phone')
+    address = request.form.get('address')
+    
+    # Get existing contact
+    contact_result, status = get_objects('ContactDetails', page_size=1)
     
     contact_data = {
-        'email': request.form.get('email'),
-        'phone': request.form.get('phone'),
-        'address': request.form.get('address')
+        'email': email,
+        'phone': phone,
+        'address': address
     }
     
-    if contact_list:
+    if status == 200 and contact_result:
         # Update existing
-        result = backendless_update('ContactDetails', contact_list[0]['objectId'], contact_data)
+        contact_id = contact_result[0].get('objectId')
+        result, update_status = update_object('ContactDetails', contact_id, contact_data)
     else:
         # Create new
-        result = backendless_create('ContactDetails', contact_data)
+        result, update_status = create_object('ContactDetails', contact_data)
     
-    if result:
+    if update_status == 200:
         flash('Contact details updated successfully!', 'success')
     else:
         flash('Failed to update contact details', 'danger')
     
     return redirect(url_for('admin_contact_details'))
 
-# Debug route to check documents
+# ============================================================================
+# DEBUG ROUTES
+# ============================================================================
+
 @app.route('/debug/documents')
 @admin_required
 def debug_documents():
@@ -1686,9 +1963,12 @@ def debug_documents():
     if os.path.exists(docs_dir):
         files = os.listdir(docs_dir)
     
-    documents = backendless_get_all('ProjectDocuments') or []
+    documents_result, status = get_objects('ProjectDocuments', page_size=100)
+    documents = documents_result if status == 200 else []
+    
     doc_info = []
     for doc in documents:
+        file_exists = os.path.exists(os.path.join(docs_dir, doc.get('file_path', ''))) if doc.get('file_path') else False
         doc_info.append({
             'id': doc.get('objectId'),
             'file_name': doc.get('file_name'),
@@ -1696,12 +1976,12 @@ def debug_documents():
             'project_id': doc.get('project_id'),
             'file_type': doc.get('file_type'),
             'uploaded_at': doc.get('uploaded_at'),
-            'file_exists': os.path.exists(os.path.join(docs_dir, doc.get('file_path', ''))) if doc.get('file_path') else False,
+            'file_exists': file_exists,
             'url': url_for('project_document', filename=doc.get('file_path')) if doc.get('file_path') else None
         })
     
     result = {
-        'documents_in_db': len(documents),
+        'documents_in_backendless': len(documents),
         'files_in_directory': len(files),
         'directory': docs_dir,
         'documents': doc_info,
@@ -1710,7 +1990,6 @@ def debug_documents():
     
     return jsonify(result)
 
-# Debug route to check profile photos
 @app.route('/debug/profile-photos')
 @login_required
 def debug_profile_photos():
@@ -1733,6 +2012,27 @@ def debug_profile_photos():
     
     return jsonify(result)
 
+# ============================================================================
+# INITIALIZATION
+# ============================================================================
+
+def initialize_backendless_tables():
+    """Create default data in Backendless if needed"""
+    
+    # Check if contact details exist
+    contact_result, status = get_objects('ContactDetails', page_size=1)
+    if status != 200 or not contact_result:
+        # Create default contact
+        default_contact = {
+            'email': 'admin@example.com',
+            'phone': '+1234567890',
+            'address': '123 Main Street, City, Country'
+        }
+        create_object('ContactDetails', default_contact)
+        print("✅ Created default contact details")
+    
+    print("📊 Backendless initialization complete")
+
 if __name__ == '__main__':
     try:
         contact_list = backendless_get_all('ContactDetails') or []
@@ -1751,9 +2051,3 @@ if __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-    
-    print("\n🚀 Server starting with Backendless integration...")
-    print(f"📊 Connected to Backendless App ID: {BACKENDLESS_APP_ID}")
-    
-    app.run(debug=True)
