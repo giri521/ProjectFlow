@@ -4,6 +4,8 @@ import string
 import smtplib
 import requests
 import json
+import logging
+import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -14,32 +16,47 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from fpdf import FPDF
 import PyPDF2
-import os
 import tempfile
 import time
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'fallback-secret-key-change-in-production')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Backendless Configuration
-BACKENDLESS_APP_ID = "EE1B45EF-1CFF-4136-B4D8-0884284D6647"
-BACKENDLESS_API_KEY = "E470F076-0348-426B-AD5B-6FA5715D009A"
+# Backendless Configuration - Using Environment Variables
+BACKENDLESS_APP_ID = os.environ.get('BACKENDLESS_APP_ID')
+BACKENDLESS_API_KEY = os.environ.get('BACKENDLESS_API_KEY')
+
+if not BACKENDLESS_APP_ID or not BACKENDLESS_API_KEY:
+    logger.error("BACKENDLESS_APP_ID and BACKENDLESS_API_KEY must be set in environment variables")
+    raise ValueError("Missing Backendless configuration")
+
 BACKENDLESS_API_URL = f"https://api.backendless.com/{BACKENDLESS_APP_ID}/{BACKENDLESS_API_KEY}"
 
-# OpenRouter AI Configuration
-app.config['OPENROUTER_API_KEY'] = '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'
+# OpenRouter AI Configuration - Using Environment Variables
+app.config['OPENROUTER_API_KEY'] = os.environ.get('OPENROUTER_API_KEY')
 app.config['OPENROUTER_API_URL'] = 'https://openrouter.ai/api/v1/chat/completions'
 app.config['OPENROUTER_MODEL'] = 'openai/gpt-3.5-turbo'
 
-# Email configuration for OTP
+if not app.config['OPENROUTER_API_KEY']:
+    logger.warning("OPENROUTER_API_KEY not set. AI summarization will not work.")
+
+# Email configuration for OTP - Using Environment Variables
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = 'your-email@gmail.com'
+app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME']  # Use the same email as sender
+app.config['MAIL_TIMEOUT'] = 30  # Add timeout to avoid hanging connections
+
+if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+    logger.warning("MAIL_USERNAME and MAIL_PASSWORD not set. Email OTP will fallback to console logging.")
 
 # Ensure upload directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -84,11 +101,12 @@ def backendless_request(method, endpoint, data=None, params=None):
         if response.status_code in [200, 201]:
             return response.json(), response.status_code
         else:
-            print(f"Backendless API Error: {response.status_code} - {response.text}")
+            logger.error(f"Backendless API Error: {response.status_code} - {response.text}")
             return {'success': False, 'error': response.text}, response.status_code
             
     except requests.exceptions.RequestException as e:
-        print(f"Backendless Request Exception: {str(e)}")
+        logger.error(f"Backendless Request Exception: {str(e)}")
+        logger.error(traceback.format_exc())
         return {'success': False, 'error': str(e)}, 500
 
 def create_object(table_name, data):
@@ -148,7 +166,8 @@ def upload_file_to_backendless(file, folder_name):
             return {'success': False, 'error': response.text}
             
     except Exception as e:
-        print(f"File upload error: {str(e)}")
+        logger.error(f"File upload error: {str(e)}")
+        logger.error(traceback.format_exc())
         return {'success': False, 'error': str(e)}
 
 # ============================================================================
@@ -199,11 +218,20 @@ def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
 def send_email_otp(recipient_email, otp):
-    """Send OTP via email using SMTP"""
+    """Send OTP via email using SMTP with proper TLS handshake and error handling"""
+    
+    # Check if email credentials are configured
+    if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+        logger.warning("Email credentials not configured. Falling back to console logging.")
+        print(f"\n{'='*50}")
+        print(f"OTP for {recipient_email}: {otp}")
+        print(f"{'='*50}\n")
+        return False
+    
     try:
         # Create message
         msg = MIMEMultipart()
-        msg['From'] = app.config['MAIL_USERNAME']
+        msg['From'] = app.config['MAIL_DEFAULT_SENDER']
         msg['To'] = recipient_email
         msg['Subject'] = 'Your OTP for ProjectFlow Registration'
         
@@ -229,18 +257,55 @@ def send_email_otp(recipient_email, otp):
         
         msg.attach(MIMEText(body, 'html'))
         
-        # Send email
-        server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
-        server.starttls()
+        # Send email with proper SMTP handling
+        logger.info(f"Attempting to send OTP to {recipient_email}")
+        
+        # Create SMTP connection with timeout
+        server = smtplib.SMTP(
+            host=app.config['MAIL_SERVER'], 
+            port=app.config['MAIL_PORT'], 
+            timeout=app.config.get('MAIL_TIMEOUT', 30)
+        )
+        
+        # Proper SMTP handshake with EHLO/STARTTLS
+        server.ehlo()  # Identify ourselves to the server
+        if app.config['MAIL_USE_TLS']:
+            server.starttls()  # Upgrade to secure connection
+            server.ehlo()  # Re-identify over TLS connection
+        
+        # Login to the server
         server.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'])
+        
+        # Send the email
         server.send_message(msg)
+        
+        # Close the connection
         server.quit()
         
-        print(f"✅ OTP sent successfully to {recipient_email}")
+        logger.info(f"✅ OTP sent successfully to {recipient_email}")
         return True
         
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP Authentication Error: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Fallback to console printing
+        print(f"\n{'='*50}")
+        print(f"OTP for {recipient_email}: {otp}")
+        print(f"{'='*50}\n")
+        return False
+        
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP Error: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Fallback to console printing
+        print(f"\n{'='*50}")
+        print(f"OTP for {recipient_email}: {otp}")
+        print(f"{'='*50}\n")
+        return False
+        
     except Exception as e:
-        print(f"❌ Failed to send email: {str(e)}")
+        logger.error(f"Unexpected error sending email: {str(e)}")
+        logger.error(traceback.format_exc())
         # Fallback to console printing
         print(f"\n{'='*50}")
         print(f"OTP for {recipient_email}: {otp}")
@@ -326,7 +391,7 @@ Make the summary technical and precise, using appropriate industry terminology."
                     'technical_jargon': parsed.get('technical_jargon', [])
                 }
             except json.JSONDecodeError:
-                print(f"Failed to parse AI response as JSON: {ai_response}")
+                logger.error(f"Failed to parse AI response as JSON: {ai_response}")
                 return {
                     'summary': 'AI response parsing failed.',
                     'key_points': ['Error in AI response format.'],
@@ -334,7 +399,7 @@ Make the summary technical and precise, using appropriate industry terminology."
                     'technical_jargon': []
                 }
         else:
-            print(f"OpenRouter API error: {response.status_code} - {response.text}")
+            logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
             return {
                 'summary': 'AI summarization service temporarily unavailable.',
                 'key_points': ['Please try again later.'],
@@ -343,7 +408,8 @@ Make the summary technical and precise, using appropriate industry terminology."
             }
             
     except requests.exceptions.RequestException as e:
-        print(f"OpenRouter API request failed: {str(e)}")
+        logger.error(f"OpenRouter API request failed: {str(e)}")
+        logger.error(traceback.format_exc())
         return {
             'summary': 'Network error during AI summarization.',
             'key_points': ['Please check your connection and try again.'],
@@ -351,7 +417,8 @@ Make the summary technical and precise, using appropriate industry terminology."
             'technical_jargon': []
         }
     except Exception as e:
-        print(f"Unexpected error in AI summarization: {str(e)}")
+        logger.error(f"Unexpected error in AI summarization: {str(e)}")
+        logger.error(traceback.format_exc())
         return {
             'summary': 'An unexpected error occurred.',
             'key_points': ['Please try again.'],
@@ -383,6 +450,8 @@ def extract_text_from_file(filename, file_display_name):
         else:
             return f"File not found on server: {full_file_path}"
     except Exception as e:
+        logger.error(f"Error reading file: {str(e)}")
+        logger.error(traceback.format_exc())
         return f"Error reading file: {str(e)}"
 
 def clean_text_for_pdf(text):
@@ -454,7 +523,7 @@ def signup():
         confirm_password = request.form.get('confirm_password')
         otp = request.form.get('otp')
         
-        print(f"Signup attempt - Email: {email}, OTP entered: {otp}")
+        logger.info(f"Signup attempt - Email: {email}")
         
         # Validate required fields
         if not all([username, email, mobile, password, confirm_password, otp]):
@@ -475,8 +544,6 @@ def signup():
         # Validate OTP
         stored_data = otp_storage.get(email)
         
-        print(f"Stored OTP data: {stored_data}")
-        
         if not stored_data:
             flash('No OTP found. Please request a new OTP.', 'danger')
             return redirect(url_for('base'))
@@ -496,7 +563,7 @@ def signup():
         
         # Compare OTPs
         if stored_otp != entered_otp:
-            print(f"OTP mismatch: stored='{stored_otp}', entered='{entered_otp}'")
+            logger.warning(f"OTP mismatch for {email}")
             flash('Invalid OTP. Please check and try again.', 'danger')
             return redirect(url_for('base'))
         
@@ -530,7 +597,8 @@ def signup():
         return redirect(url_for('base'))
         
     except Exception as e:
-        print(f"Error in signup: {str(e)}")
+        logger.error(f"Error in signup: {str(e)}")
+        logger.error(traceback.format_exc())
         flash('An error occurred during registration. Please try again.', 'danger')
         return redirect(url_for('base'))
 
@@ -558,15 +626,14 @@ def send_otp():
         }
         
         # Print to console for debugging
-        print(f"\n{'='*50}")
-        print(f"OTP GENERATED FOR {email}: {otp}")
-        print(f"{'='*50}\n")
+        logger.info(f"OTP GENERATED FOR {email}: {otp}")
         
         # Try to send email, but don't fail if it doesn't work
         try:
             send_email_otp(email, otp)
         except Exception as e:
-            print(f"Email sending failed but continuing: {e}")
+            logger.error(f"Email sending failed but continuing: {e}")
+            logger.error(traceback.format_exc())
         
         return jsonify({
             'success': True, 
@@ -574,7 +641,8 @@ def send_otp():
         })
             
     except Exception as e:
-        print(f"Error in send_otp: {str(e)}")
+        logger.error(f"Error in send_otp: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({'success': False, 'message': 'Server error'}), 500
 
 @app.route('/user-login', methods=['POST'])
@@ -601,7 +669,7 @@ def admin_login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Fixed admin credentials
+        # Fixed admin credentials (consider moving these to environment variables too)
         if username == 'admin' and password == 'admin123':
             session['is_admin'] = True
             return redirect(url_for('admin_dashboard'))
@@ -633,7 +701,7 @@ def uploaded_file(filename):
             abort(404)
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     except Exception as e:
-        print(f"Error serving file {filename}: {str(e)}")
+        logger.error(f"Error serving file {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/profile_photos/<path:filename>')
@@ -644,7 +712,7 @@ def profile_photo(filename):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos'), filename)
     except Exception as e:
-        print(f"Error serving profile photo {filename}: {str(e)}")
+        logger.error(f"Error serving profile photo {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/project_documents/<path:filename>')
@@ -655,7 +723,7 @@ def project_document(filename):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents'), filename)
     except Exception as e:
-        print(f"Error serving project document {filename}: {str(e)}")
+        logger.error(f"Error serving project document {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/team_photos/<path:filename>')
@@ -666,7 +734,7 @@ def team_photo(filename):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos'), filename)
     except Exception as e:
-        print(f"Error serving team photo {filename}: {str(e)}")
+        logger.error(f"Error serving team photo {filename}: {str(e)}")
         return "File not found", 404
 
 # ============================================================================
@@ -1113,6 +1181,8 @@ def download_summary_pdf(doc_id):
             pdf_bytes = pdf_output.encode('latin-1', errors='replace')
     except Exception as e:
         # If all else fails, create a simple error PDF
+        logger.error(f"Error generating PDF: {str(e)}")
+        logger.error(traceback.format_exc())
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 16)
@@ -1171,8 +1241,8 @@ def user_chat():
     messages_dict = {}
     unread_counts = {}
     
-    print(f"Loading chat for user {current_user.username}")
-    print(f"Found {len(projects)} projects")
+    logger.info(f"Loading chat for user {current_user.username}")
+    logger.info(f"Found {len(projects)} projects")
     
     for project in projects:
         project_id = project.get('objectId')
@@ -1183,7 +1253,7 @@ def user_chat():
             # Sort by timestamp
             sorted_messages = sorted(messages_result, key=lambda x: x.get('timestamp', ''))
             messages_dict[project_id] = sorted_messages
-            print(f"Project {project_id} ({project.get('title')}) has {len(sorted_messages)} messages")
+            logger.info(f"Project {project_id} ({project.get('title')}) has {len(sorted_messages)} messages")
         
         # Count unread admin messages
         unread_result, unread_status = get_objects('Messages', 
@@ -2029,25 +2099,17 @@ def initialize_backendless_tables():
             'address': '123 Main Street, City, Country'
         }
         create_object('ContactDetails', default_contact)
-        print("✅ Created default contact details")
+        logger.info("✅ Created default contact details")
     
-    print("📊 Backendless initialization complete")
+    logger.info("📊 Backendless initialization complete")
 
 if __name__ == '__main__':
     try:
-        contact_list = backendless_get_all('ContactDetails') or []
-
-        if not contact_list:
-            default_contact = {
-                'email': 'admin@example.com',
-                'phone': '+1234567890',
-                'address': '123 Main Street, City, Country'
-            }
-            backendless_create('ContactDetails', default_contact)
-            print("✅ Created default contact details")
-
+        initialize_backendless_tables()
     except Exception as e:
-        print("⚠️ ContactDetails table not found. Please create it in Backendless.")
+        logger.error(f"Initialization error: {str(e)}")
+        logger.error(traceback.format_exc())
+        logger.warning("⚠️ Some tables may not exist. Please create them in Backendless.")
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
