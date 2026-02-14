@@ -1734,16 +1734,24 @@ def debug_profile_photos():
     return jsonify(result)
 
 if __name__ == '__main__':
-    # Create default contact if not exists
-    contact_list = backendless_get_all('ContactDetails') or []
-    if not contact_list:
-        default_contact = {
-            'email': 'admin@example.com',
-            'phone': '+1234567890',
-            'address': '123 Main Street, City, Country'
-        }
-        backendless_create('ContactDetails', default_contact)
-        print("✅ Created default contact details")
+    try:
+        contact_list = backendless_get_all('ContactDetails') or []
+
+        if not contact_list:
+            default_contact = {
+                'email': 'admin@example.com',
+                'phone': '+1234567890',
+                'address': '123 Main Street, City, Country'
+            }
+            backendless_create('ContactDetails', default_contact)
+            print("✅ Created default contact details")
+
+    except Exception as e:
+        print("⚠️ ContactDetails table not found. Please create it in Backendless.")
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
+
     
     print("\n🚀 Server starting with Backendless integration...")
     print(f"📊 Connected to Backendless App ID: {BACKENDLESS_APP_ID}")
