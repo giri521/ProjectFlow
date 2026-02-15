@@ -4,8 +4,6 @@ import string
 import smtplib
 import requests
 import json
-import logging
-import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -14,56 +12,42 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_from_directory, abort, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 from fpdf import FPDF
 import PyPDF2
+import os
 import tempfile
-import time
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'fallback-secret-key-change-in-production')
+app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///project_management.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Backendless Configuration - Using Environment Variables
-BACKENDLESS_APP_ID = os.environ.get('BACKENDLESS_APP_ID')
-BACKENDLESS_API_KEY = os.environ.get('BACKENDLESS_API_KEY')
-
-if not BACKENDLESS_APP_ID or not BACKENDLESS_API_KEY:
-    logger.error("BACKENDLESS_APP_ID and BACKENDLESS_API_KEY must be set in environment variables")
-    raise ValueError("Missing Backendless configuration")
-
-BACKENDLESS_API_URL = f"https://api.backendless.com/{BACKENDLESS_APP_ID}/{BACKENDLESS_API_KEY}"
-
-# OpenRouter AI Configuration - Using Environment Variables
-app.config['OPENROUTER_API_KEY'] = os.environ.get('OPENROUTER_API_KEY')
+# OpenRouter AI Configuration
+app.config['OPENROUTER_API_KEY'] = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 
 app.config['OPENROUTER_API_URL'] = 'https://openrouter.ai/api/v1/chat/completions'
-app.config['OPENROUTER_MODEL'] = 'openai/gpt-3.5-turbo'
+app.config['OPENROUTER_MODEL'] = 'openai/gpt-3.5-turbo'  # You can change this model
 
-if not app.config['OPENROUTER_API_KEY']:
-    logger.warning("OPENROUTER_API_KEY not set. AI summarization will not work.")
-
-# Email configuration for OTP - Using Environment Variables
+# Email configuration for OTP (Update with your email credentials)
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME']  # Use the same email as sender
-app.config['MAIL_TIMEOUT'] = 30  # Add timeout to avoid hanging connections
+app.config['MAIL_USERNAME'] = 'girivennapusa8@gmail.com'  # Replace with your email
+app.config['MAIL_PASSWORD'] = 'XXXXXXXXXXXXXX'  # Replace with your app password
+app.config['MAIL_DEFAULT_SENDER'] = 'your-email@gmail.com'
 
-if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-    logger.warning("MAIL_USERNAME and MAIL_PASSWORD not set. Email OTP will fallback to console logging.")
 
-# Ensure upload directories exist
+# Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos'), exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents'), exist_ok=True)
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos'), exist_ok=True)
 
+db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'base'
@@ -71,167 +55,96 @@ login_manager.login_view = 'base'
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx', 'txt'}
 
-# OTP Storage (in-memory, can be moved to Backendless if needed)
-otp_storage = {}  # Format: {email: {'otp': '123456', 'timestamp': 1234567890}}
-
-# ============================================================================
-# BACKENDLESS HELPER FUNCTIONS
-# ============================================================================
-
-def backendless_request(method, endpoint, data=None, params=None):
-    """Make a request to Backendless REST API"""
-    url = f"{BACKENDLESS_API_URL}/{endpoint}"
-    
-    headers = {
-        'Content-Type': 'application/json'
-    }
-    
-    try:
-        if method.upper() == 'GET':
-            response = requests.get(url, headers=headers, params=params)
-        elif method.upper() == 'POST':
-            response = requests.post(url, headers=headers, json=data)
-        elif method.upper() == 'PUT':
-            response = requests.put(url, headers=headers, json=data)
-        elif method.upper() == 'DELETE':
-            response = requests.delete(url, headers=headers)
-        else:
-            return {'success': False, 'error': 'Invalid method'}, 400
-        
-        if response.status_code in [200, 201]:
-            return response.json(), response.status_code
-        else:
-            logger.error(f"Backendless API Error: {response.status_code} - {response.text}")
-            return {'success': False, 'error': response.text}, response.status_code
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Backendless Request Exception: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {'success': False, 'error': str(e)}, 500
-
-def create_object(table_name, data):
-    """Create a new object in Backendless"""
-    return backendless_request('POST', f'data/{table_name}', data=data)
-
-def get_objects(table_name, where_clause=None, page_size=100, offset=0):
-    """Get objects from Backendless with optional where clause"""
-    params = {
-        'pageSize': page_size,
-        'offset': offset
-    }
-    if where_clause:
-        params['where'] = where_clause
-    
-    return backendless_request('GET', f'data/{table_name}', params=params)
-
-def get_object_by_id(table_name, object_id):
-    """Get a single object by ID"""
-    return backendless_request('GET', f'data/{table_name}/{object_id}')
-
-def update_object(table_name, object_id, data):
-    """Update an object in Backendless"""
-    return backendless_request('PUT', f'data/{table_name}/{object_id}', data=data)
-
-def delete_object(table_name, object_id):
-    """Delete an object from Backendless"""
-    return backendless_request('DELETE', f'data/{table_name}/{object_id}')
-
-def upload_file_to_backendless(file, folder_name):
-    """Upload a file to Backendless and return the file URL"""
-    try:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        safe_filename = secure_filename(file.filename)
-        filename = f"{timestamp}_{safe_filename}"
-        
-        # Save locally first (temporarily)
-        local_path = os.path.join(app.config['UPLOAD_FOLDER'], folder_name, filename)
-        file.save(local_path)
-        
-        # Upload to Backendless file service
-        url = f"{BACKENDLESS_API_URL}/files/{folder_name}/{filename}"
-        
-        with open(local_path, 'rb') as f:
-            files = {'file': (filename, f, 'application/octet-stream')}
-            response = requests.post(url, files=files)
-        
-        if response.status_code in [200, 201]:
-            file_url = response.json().get('fileURL')
-            return {
-                'success': True,
-                'filename': filename,
-                'url': file_url,
-                'local_path': local_path
-            }
-        else:
-            return {'success': False, 'error': response.text}
-            
-    except Exception as e:
-        logger.error(f"File upload error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {'success': False, 'error': str(e)}
-
-# ============================================================================
-# USER CLASS FOR FLASK-LOGIN
-# ============================================================================
-
-class User(UserMixin):
-    def __init__(self, user_data):
-        self.id = user_data.get('objectId')
-        self.username = user_data.get('username')
-        self.email = user_data.get('email')
-        self.mobile = user_data.get('mobile')
-        self.password = user_data.get('password')
-        self.profile_photo = user_data.get('profile_photo')
-        self.created_at = user_data.get('created')
-
-@login_manager.user_loader
-def load_user(user_id):
-    """Load user from Backendless by ID"""
-    result, status = get_object_by_id('Users', user_id)
-    if status == 200:
-        return User(result)
-    return None
-
-def get_user_by_email_or_username(email_or_username):
-    """Get user by email or username"""
-    # Try by email first
-    result, status = get_objects('Users', f"email = '{email_or_username}'")
-    if status == 200 and result and len(result) > 0:
-        return User(result[0])
-    
-    # Try by username
-    result, status = get_objects('Users', f"username = '{email_or_username}'")
-    if status == 200 and result and len(result) > 0:
-        return User(result[0])
-    
-    return None
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Database Models
+class User(UserMixin, db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    mobile = db.Column(db.String(20))
+    password = db.Column(db.String(200), nullable=False)
+    profile_photo = db.Column(db.String(200))  # Store only filename
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    projects = db.relationship('Project', backref='user', lazy=True, cascade='all, delete-orphan')
+
+class Project(db.Model):
+    __tablename__ = 'projects'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    status = db.Column(db.String(50), default='Requested')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    tracking_steps = db.relationship('ProjectTracking', backref='project', lazy=True, cascade='all, delete-orphan')
+    documents = db.relationship('ProjectDocument', backref='project', lazy=True, cascade='all, delete-orphan')
+    messages = db.relationship('Message', backref='project', lazy=True, cascade='all, delete-orphan', order_by='Message.timestamp')
+
+class ProjectTracking(db.Model):
+    __tablename__ = 'project_tracking'
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
+    step_name = db.Column(db.String(200), nullable=False)
+    step_status = db.Column(db.String(50), default='Pending')
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    proof_files = db.Column(db.Text)  # Store as comma-separated filenames
+    images = db.Column(db.Text)  # Store as comma-separated filenames
+
+class ProjectDocument(db.Model):
+    __tablename__ = 'project_documents'
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
+    file_name = db.Column(db.String(200))
+    file_path = db.Column(db.String(200))  # Store only filename, not full path
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    file_type = db.Column(db.String(50), default='document')  # 'proof', 'image', or 'document'
+    ai_summary = db.Column(db.Text, nullable=True)  # Store AI-generated summary
+    key_points = db.Column(db.Text, nullable=True)  # Store extracted key points
+    tools_technologies = db.Column(db.Text, nullable=True)  # Store extracted tools and technologies
+    technical_jargon = db.Column(db.Text, nullable=True)  # Store technical jargon
+
+class Message(db.Model):
+    __tablename__ = 'messages'
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
+    sender = db.Column(db.String(50))  # 'user' or 'admin'
+    message = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    is_read = db.Column(db.Boolean, default=False)  # Track if message has been read
+
+class ContactDetails(db.Model):
+    __tablename__ = 'contact_details'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120))
+    phone = db.Column(db.String(20))
+    address = db.Column(db.Text)
+
+# Team Member Model
+class TeamMember(db.Model):
+    __tablename__ = 'team_members'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    role = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    mobile = db.Column(db.String(20), nullable=False)
+    photo = db.Column(db.String(200))  # Store filename
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+# OTP Storage
+otp_storage = {}  # Format: {email: {'otp': '123456', 'timestamp': 1234567890}}
 
 def generate_otp():
     """Generate a 6-digit OTP"""
     return ''.join(random.choices(string.digits, k=6))
 
 def send_email_otp(recipient_email, otp):
-    """Send OTP via email using SMTP with proper TLS handshake and error handling"""
-    
-    # Check if email credentials are configured
-    if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-        logger.warning("Email credentials not configured. Falling back to console logging.")
-        print(f"\n{'='*50}")
-        print(f"OTP for {recipient_email}: {otp}")
-        print(f"{'='*50}\n")
-        return False
-    
+    """Send OTP via email using SMTP"""
     try:
         # Create message
         msg = MIMEMultipart()
-        msg['From'] = app.config['MAIL_DEFAULT_SENDER']
+        msg['From'] = app.config['MAIL_USERNAME']
         msg['To'] = recipient_email
         msg['Subject'] = 'Your OTP for ProjectFlow Registration'
         
@@ -257,55 +170,18 @@ def send_email_otp(recipient_email, otp):
         
         msg.attach(MIMEText(body, 'html'))
         
-        # Send email with proper SMTP handling
-        logger.info(f"Attempting to send OTP to {recipient_email}")
-        
-        # Create SMTP connection with timeout
-        server = smtplib.SMTP(
-            host=app.config['MAIL_SERVER'], 
-            port=app.config['MAIL_PORT'], 
-            timeout=app.config.get('MAIL_TIMEOUT', 30)
-        )
-        
-        # Proper SMTP handshake with EHLO/STARTTLS
-        server.ehlo()  # Identify ourselves to the server
-        if app.config['MAIL_USE_TLS']:
-            server.starttls()  # Upgrade to secure connection
-            server.ehlo()  # Re-identify over TLS connection
-        
-        # Login to the server
+        # Send email
+        server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
+        server.starttls()
         server.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'])
-        
-        # Send the email
         server.send_message(msg)
-        
-        # Close the connection
         server.quit()
         
-        logger.info(f"✅ OTP sent successfully to {recipient_email}")
+        print(f"✅ OTP sent successfully to {recipient_email}")
         return True
         
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP Authentication Error: {str(e)}")
-        logger.error(traceback.format_exc())
-        # Fallback to console printing
-        print(f"\n{'='*50}")
-        print(f"OTP for {recipient_email}: {otp}")
-        print(f"{'='*50}\n")
-        return False
-        
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP Error: {str(e)}")
-        logger.error(traceback.format_exc())
-        # Fallback to console printing
-        print(f"\n{'='*50}")
-        print(f"OTP for {recipient_email}: {otp}")
-        print(f"{'='*50}\n")
-        return False
-        
     except Exception as e:
-        logger.error(f"Unexpected error sending email: {str(e)}")
-        logger.error(traceback.format_exc())
+        print(f"❌ Failed to send email: {str(e)}")
         # Fallback to console printing
         print(f"\n{'='*50}")
         print(f"OTP for {recipient_email}: {otp}")
@@ -391,7 +267,7 @@ Make the summary technical and precise, using appropriate industry terminology."
                     'technical_jargon': parsed.get('technical_jargon', [])
                 }
             except json.JSONDecodeError:
-                logger.error(f"Failed to parse AI response as JSON: {ai_response}")
+                print(f"Failed to parse AI response as JSON: {ai_response}")
                 return {
                     'summary': 'AI response parsing failed.',
                     'key_points': ['Error in AI response format.'],
@@ -399,7 +275,7 @@ Make the summary technical and precise, using appropriate industry terminology."
                     'technical_jargon': []
                 }
         else:
-            logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
+            print(f"OpenRouter API error: {response.status_code} - {response.text}")
             return {
                 'summary': 'AI summarization service temporarily unavailable.',
                 'key_points': ['Please try again later.'],
@@ -408,8 +284,7 @@ Make the summary technical and precise, using appropriate industry terminology."
             }
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"OpenRouter API request failed: {str(e)}")
-        logger.error(traceback.format_exc())
+        print(f"OpenRouter API request failed: {str(e)}")
         return {
             'summary': 'Network error during AI summarization.',
             'key_points': ['Please check your connection and try again.'],
@@ -417,8 +292,7 @@ Make the summary technical and precise, using appropriate industry terminology."
             'technical_jargon': []
         }
     except Exception as e:
-        logger.error(f"Unexpected error in AI summarization: {str(e)}")
-        logger.error(traceback.format_exc())
+        print(f"Unexpected error in AI summarization: {str(e)}")
         return {
             'summary': 'An unexpected error occurred.',
             'key_points': ['Please try again.'],
@@ -450,8 +324,6 @@ def extract_text_from_file(filename, file_display_name):
         else:
             return f"File not found on server: {full_file_path}"
     except Exception as e:
-        logger.error(f"Error reading file: {str(e)}")
-        logger.error(traceback.format_exc())
         return f"Error reading file: {str(e)}"
 
 def clean_text_for_pdf(text):
@@ -496,6 +368,10 @@ def clean_text_for_pdf(text):
     # Remove any remaining non-Latin-1 characters
     return text.encode('latin-1', errors='ignore').decode('latin-1')
 
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -505,10 +381,82 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ============================================================================
-# ROUTES
-# ============================================================================
+# Database migration function
+def add_missing_columns():
+    """Add missing columns to tables if they don't exist"""
+    inspector = inspect(db.engine)
+    
+    # Check users table
+    if 'users' in inspector.get_table_names():
+        user_columns = [col['name'] for col in inspector.get_columns('users')]
+        
+        # Add created_at column if it doesn't exist
+        if 'created_at' not in user_columns:
+            print("📝 Adding created_at column to users table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN created_at TIMESTAMP"))
+                    conn.commit()
+                print("✅ Successfully added created_at column to users table")
+            except Exception as e:
+                print(f"❌ Failed to add created_at column: {str(e)}")
+    
+    # Check project_documents table
+    if 'project_documents' in inspector.get_table_names():
+        doc_columns = [col['name'] for col in inspector.get_columns('project_documents')]
+        
+        if 'file_type' not in doc_columns:
+            print("📝 Adding file_type column to project_documents table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE project_documents ADD COLUMN file_type VARCHAR(50) DEFAULT 'document'"))
+                    conn.commit()
+                print("✅ Successfully added file_type column")
+            except Exception as e:
+                print(f"❌ Failed to add file_type column: {str(e)}")
+        
+        # Add AI summary columns if they don't exist
+        if 'ai_summary' not in doc_columns:
+            print("📝 Adding ai_summary column to project_documents table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE project_documents ADD COLUMN ai_summary TEXT"))
+                    conn.commit()
+                print("✅ Successfully added ai_summary column")
+            except Exception as e:
+                print(f"❌ Failed to add ai_summary column: {str(e)}")
+        
+        if 'key_points' not in doc_columns:
+            print("📝 Adding key_points column to project_documents table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE project_documents ADD COLUMN key_points TEXT"))
+                    conn.commit()
+                print("✅ Successfully added key_points column")
+            except Exception as e:
+                print(f"❌ Failed to add key_points column: {str(e)}")
+        
+        if 'tools_technologies' not in doc_columns:
+            print("📝 Adding tools_technologies column to project_documents table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE project_documents ADD COLUMN tools_technologies TEXT"))
+                    conn.commit()
+                print("✅ Successfully added tools_technologies column")
+            except Exception as e:
+                print(f"❌ Failed to add tools_technologies column: {str(e)}")
+        
+        if 'technical_jargon' not in doc_columns:
+            print("📝 Adding technical_jargon column to project_documents table...")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE project_documents ADD COLUMN technical_jargon TEXT"))
+                    conn.commit()
+                print("✅ Successfully added technical_jargon column")
+            except Exception as e:
+                print(f"❌ Failed to add technical_jargon column: {str(e)}")
 
+# Routes
 @app.route('/')
 def base():
     return render_template('base.html')
@@ -523,26 +471,26 @@ def signup():
         confirm_password = request.form.get('confirm_password')
         otp = request.form.get('otp')
         
-        logger.info(f"Signup attempt - Email: {email}")
+        print(f"Signup attempt - Email: {email}, OTP entered: {otp}")
         
         # Validate required fields
         if not all([username, email, mobile, password, confirm_password, otp]):
             flash('All fields are required', 'danger')
             return redirect(url_for('base'))
         
-        # Check if user exists in Backendless
-        existing_user, status = get_objects('Users', f"username = '{username}'")
-        if status == 200 and existing_user and len(existing_user) > 0:
+        # Check if user exists
+        if User.query.filter_by(username=username).first():
             flash('Username already exists', 'danger')
             return redirect(url_for('base'))
         
-        existing_email, status = get_objects('Users', f"email = '{email}'")
-        if status == 200 and existing_email and len(existing_email) > 0:
+        if User.query.filter_by(email=email).first():
             flash('Email already registered', 'danger')
             return redirect(url_for('base'))
         
         # Validate OTP
         stored_data = otp_storage.get(email)
+        
+        print(f"Stored OTP data: {stored_data}")
         
         if not stored_data:
             flash('No OTP found. Please request a new OTP.', 'danger')
@@ -563,7 +511,7 @@ def signup():
         
         # Compare OTPs
         if stored_otp != entered_otp:
-            logger.warning(f"OTP mismatch for {email}")
+            print(f"OTP mismatch: stored='{stored_otp}', entered='{entered_otp}'")
             flash('Invalid OTP. Please check and try again.', 'danger')
             return redirect(url_for('base'))
         
@@ -576,29 +524,25 @@ def signup():
             flash('Password must be at least 8 characters long', 'danger')
             return redirect(url_for('base'))
         
-        # Create user in Backendless
+        # Create user
         hashed_password = generate_password_hash(password)
-        user_data = {
-            'username': username,
-            'email': email,
-            'mobile': mobile,
-            'password': hashed_password
-        }
+        new_user = User(
+            username=username, 
+            email=email, 
+            mobile=mobile, 
+            password=hashed_password
+        )
+        db.session.add(new_user)
+        db.session.commit()
         
-        result, status = create_object('Users', user_data)
+        # Clear OTP
+        otp_storage.pop(email, None)
         
-        if status == 200:
-            # Clear OTP
-            otp_storage.pop(email, None)
-            flash('Registration successful! Please login.', 'success')
-        else:
-            flash('Registration failed. Please try again.', 'danger')
-        
+        flash('Registration successful! Please login.', 'success')
         return redirect(url_for('base'))
         
     except Exception as e:
-        logger.error(f"Error in signup: {str(e)}")
-        logger.error(traceback.format_exc())
+        print(f"Error in signup: {str(e)}")
         flash('An error occurred during registration. Please try again.', 'danger')
         return redirect(url_for('base'))
 
@@ -611,9 +555,8 @@ def send_otp():
         if not email:
             return jsonify({'success': False, 'message': 'Email is required'}), 400
         
-        # Check if email already registered in Backendless
-        existing, status = get_objects('Users', f"email = '{email}'")
-        if status == 200 and existing and len(existing) > 0:
+        # Check if email already registered
+        if User.query.filter_by(email=email).first():
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
         # Generate OTP
@@ -626,14 +569,15 @@ def send_otp():
         }
         
         # Print to console for debugging
-        logger.info(f"OTP GENERATED FOR {email}: {otp}")
+        print(f"\n{'='*50}")
+        print(f"OTP GENERATED FOR {email}: {otp}")
+        print(f"{'='*50}\n")
         
         # Try to send email, but don't fail if it doesn't work
         try:
             send_email_otp(email, otp)
         except Exception as e:
-            logger.error(f"Email sending failed but continuing: {e}")
-            logger.error(traceback.format_exc())
+            print(f"Email sending failed but continuing: {e}")
         
         return jsonify({
             'success': True, 
@@ -641,8 +585,7 @@ def send_otp():
         })
             
     except Exception as e:
-        logger.error(f"Error in send_otp: {str(e)}")
-        logger.error(traceback.format_exc())
+        print(f"Error in send_otp: {str(e)}")
         return jsonify({'success': False, 'message': 'Server error'}), 500
 
 @app.route('/user-login', methods=['POST'])
@@ -654,7 +597,9 @@ def user_login():
         flash('Please enter both username/email and password', 'danger')
         return redirect(url_for('base'))
     
-    user = get_user_by_email_or_username(username_or_email)
+    user = User.query.filter(
+        (User.username == username_or_email) | (User.email == username_or_email)
+    ).first()
     
     if user and check_password_hash(user.password, password):
         login_user(user)
@@ -669,7 +614,7 @@ def admin_login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Fixed admin credentials (consider moving these to environment variables too)
+        # Fixed admin credentials
         if username == 'admin' and password == 'admin123':
             session['is_admin'] = True
             return redirect(url_for('admin_dashboard'))
@@ -689,76 +634,72 @@ def admin_logout():
     session.pop('is_admin', None)
     return redirect(url_for('admin_login'))
 
-# ============================================================================
-# FILE SERVING ROUTES
-# ============================================================================
-
+# File serving routes
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
     """Serve files from the uploads directory"""
     try:
+        # Security check to prevent directory traversal
         if '..' in filename or filename.startswith('/'):
             abort(404)
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     except Exception as e:
-        logger.error(f"Error serving file {filename}: {str(e)}")
+        print(f"Error serving file {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/profile_photos/<path:filename>')
 def profile_photo(filename):
     """Serve profile photos from the uploads/profile_photos directory"""
     try:
+        # Security check
         if '..' in filename or filename.startswith('/'):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos'), filename)
     except Exception as e:
-        logger.error(f"Error serving profile photo {filename}: {str(e)}")
+        print(f"Error serving profile photo {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/project_documents/<path:filename>')
 def project_document(filename):
     """Serve project documents from the uploads/project_documents directory"""
     try:
+        # Security check
         if '..' in filename or filename.startswith('/'):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents'), filename)
     except Exception as e:
-        logger.error(f"Error serving project document {filename}: {str(e)}")
+        print(f"Error serving project document {filename}: {str(e)}")
         return "File not found", 404
 
 @app.route('/uploads/team_photos/<path:filename>')
 def team_photo(filename):
     """Serve team member photos from the uploads/team_photos directory"""
     try:
+        # Security check
         if '..' in filename or filename.startswith('/'):
             abort(404)
         return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos'), filename)
     except Exception as e:
-        logger.error(f"Error serving team photo {filename}: {str(e)}")
+        print(f"Error serving team photo {filename}: {str(e)}")
         return "File not found", 404
 
-# ============================================================================
-# USER ROUTES
-# ============================================================================
-
+# User Routes
 @app.route('/user/dashboard')
 @login_required
 def user_dashboard():
-    # Get user's projects from Backendless
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     total_projects = len(projects)
-    accepted = len([p for p in projects if p.get('status') == 'Accepted'])
-    rejected = len([p for p in projects if p.get('status') == 'Rejected'])
-    in_progress = len([p for p in projects if p.get('status') == 'In Progress'])
+    accepted = len([p for p in projects if p.status == 'Accepted'])
+    rejected = len([p for p in projects if p.status == 'Rejected'])
+    in_progress = len([p for p in projects if p.status == 'In Progress'])
     
     # Get unread message count for each project
     for project in projects:
-        messages_result, msg_status = get_objects('Messages', 
-            f"project_id = '{project.get('objectId')}' AND sender = 'admin' AND is_read = false")
-        project['unread_count'] = len(messages_result) if msg_status == 200 else 0
+        project.unread_count = Message.query.filter_by(
+            project_id=project.id, 
+            sender='admin', 
+            is_read=False
+        ).count()
     
     return render_template('user.html', 
                          section='dashboard',
@@ -771,8 +712,7 @@ def user_dashboard():
 @app.route('/user/projects')
 @login_required
 def user_projects():
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     return render_template('user.html', section='projects', projects=projects)
 
 @app.route('/user/request-project', methods=['POST'])
@@ -785,97 +725,65 @@ def request_project():
         flash('Please provide both title and description', 'danger')
         return redirect(url_for('user_projects'))
     
-    project_data = {
-        'user_id': current_user.id,
-        'title': title,
-        'description': description,
-        'status': 'Requested',
-        'created_at': datetime.now().isoformat()
-    }
+    new_project = Project(user_id=current_user.id, title=title, description=description)
+    db.session.add(new_project)
+    db.session.commit()
     
-    project_result, status = create_object('Projects', project_data)
+    # Add default tracking steps
+    default_steps = [
+        'Request Received',
+        'Requirement Analysis',
+        'Frontend Development',
+        'Backend Development',
+        'Testing',
+        'Deployment'
+    ]
     
-    if status == 200:
-        project_id = project_result.get('objectId')
-        
-        # Add default tracking steps
-        default_steps = [
-            'Request Received',
-            'Requirement Analysis',
-            'Frontend Development',
-            'Backend Development',
-            'Testing',
-            'Deployment'
-        ]
-        
-        for step in default_steps:
-            tracking_data = {
-                'project_id': project_id,
-                'step_name': step,
-                'step_status': 'Pending',
-                'created_at': datetime.now().isoformat()
-            }
-            create_object('ProjectTracking', tracking_data)
-        
-        # Send welcome message
-        message_data = {
-            'project_id': project_id,
-            'sender': 'admin',
-            'message': "✅ Welcome! Your project has been created successfully. We'll review your request and get back to you soon.",
-            'timestamp': datetime.now().isoformat(),
-            'is_read': False
-        }
-        create_object('Messages', message_data)
-        
-        flash('Project requested successfully!', 'success')
-    else:
-        flash('Failed to create project. Please try again.', 'danger')
+    for step in default_steps:
+        tracking = ProjectTracking(project_id=new_project.id, step_name=step)
+        db.session.add(tracking)
     
+    db.session.commit()
+    
+    # Send welcome message
+    welcome_message = Message(
+        project_id=new_project.id,
+        sender='admin',
+        message="✅ Welcome! Your project has been created successfully. We'll review your request and get back to you soon."
+    )
+    db.session.add(welcome_message)
+    db.session.commit()
+    
+    flash('Project requested successfully!', 'success')
     return redirect(url_for('user_projects'))
 
 @app.route('/user/track-projects')
 @login_required
 def user_track_projects():
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     
     # Calculate progress for each project
     for project in projects:
-        tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project.get('objectId')}'")
-        if track_status == 200 and tracking_result:
-            total_steps = len(tracking_result)
-            completed_steps = len([s for s in tracking_result if s.get('step_status') == 'Completed'])
-            project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
-        else:
-            project['progress'] = 0
+        total_steps = len(project.tracking_steps)
+        completed_steps = len([s for s in project.tracking_steps if s.step_status == 'Completed'])
+        project.progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0
     
     return render_template('user.html', section='track', projects=projects)
 
-@app.route('/user/project/<project_id>/track')
+@app.route('/user/project/<int:project_id>/track')
 @login_required
 def view_project_tracking(project_id):
-    project_result, status = get_object_by_id('Projects', project_id)
-    
-    if status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    # Verify ownership
-    if project_result.get('user_id') != current_user.id:
+    project = Project.query.get_or_404(project_id)
+    if project.user_id != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    project = project_result
-    
-    tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project_id}'")
-    tracking_steps = tracking_result if track_status == 200 else []
-    
-    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
-    documents = documents_result if doc_status == 200 else []
+    tracking_steps = ProjectTracking.query.filter_by(project_id=project_id).all()
+    documents = ProjectDocument.query.filter_by(project_id=project_id).all()
     
     # Calculate progress
     total_steps = len(tracking_steps)
-    completed_steps = len([s for s in tracking_steps if s.get('step_status') == 'Completed'])
+    completed_steps = len([s for s in tracking_steps if s.step_status == 'Completed'])
     progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0
     
     return render_template('user.html', 
@@ -888,91 +796,76 @@ def view_project_tracking(project_id):
 @app.route('/user/summarize-documents')
 @login_required
 def user_summarize_documents():
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     
-    # Get documents for each project
+    # Debug print
+    print(f"User {current_user.username} has {len(projects)} projects")
     for project in projects:
-        docs_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project.get('objectId')}'")
-        project['documents'] = docs_result if doc_status == 200 else []
+        print(f"Project {project.id}: {project.title} has {len(project.documents)} documents")
+        for doc in project.documents:
+            print(f"  - Document: {doc.file_name} (Type: {doc.file_type})")
     
     return render_template('user.html', 
                          section='summarize', 
                          projects=projects)
 
-@app.route('/user/project/<project_id>/documents')
+@app.route('/user/project/<int:project_id>/documents')
 @login_required
 def view_project_documents(project_id):
-    project_result, status = get_object_by_id('Projects', project_id)
-    
-    if status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    # Verify ownership
-    if project_result.get('user_id') != current_user.id:
+    project = Project.query.get_or_404(project_id)
+    if project.user_id != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
-    documents = documents_result if doc_status == 200 else []
+    documents = ProjectDocument.query.filter_by(project_id=project_id).all()
+    
+    # Debug print
+    print(f"Project {project_id} has {len(documents)} documents")
+    for doc in documents:
+        print(f"Document: {doc.file_name}, Path: {doc.file_path}, Type: {doc.file_type}, Uploaded: {doc.uploaded_at}")
     
     return render_template('user.html', 
                          section='documents',
-                         project=project_result,
+                         project=project,
                          documents=documents)
 
-@app.route('/user/document/<doc_id>/summarize')
+@app.route('/user/document/<int:doc_id>/summarize')
 @login_required
 def summarize_document(doc_id):
-    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    document = ProjectDocument.query.get_or_404(doc_id)
+    project = Project.query.get(document.project_id)
     
-    if status != 200:
-        flash('Document not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
-    
-    if proj_status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    # Verify ownership
-    if project_result.get('user_id') != current_user.id:
+    if project.user_id != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    document = document_result
-    project = project_result
-    
     # Check if we already have an AI summary
-    if document.get('ai_summary') and document.get('key_points') and document.get('tools_technologies'):
+    if document.ai_summary and document.key_points and document.tools_technologies:
         # Parse stored data
         try:
-            key_points = json.loads(document.get('key_points')) if document.get('key_points') else []
-            tools_technologies = json.loads(document.get('tools_technologies')) if document.get('tools_technologies') else []
-            technical_jargon = json.loads(document.get('technical_jargon')) if document.get('technical_jargon') else []
-            summary = document.get('ai_summary')
+            key_points = json.loads(document.key_points) if document.key_points else []
+            tools_technologies = json.loads(document.tools_technologies) if document.tools_technologies else []
+            technical_jargon = json.loads(document.technical_jargon) if document.technical_jargon else []
+            summary = document.ai_summary
         except:
             key_points = []
             tools_technologies = []
             technical_jargon = []
-            summary = document.get('ai_summary')
+            summary = document.ai_summary
     else:
         # Extract text and generate AI summary
-        full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
+        full_text = extract_text_from_file(document.file_path, document.file_name)
         
         if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
             ai_result = summarize_with_openrouter(full_text)
             
-            # Store results in Backendless
-            update_data = {
-                'ai_summary': ai_result['summary'],
-                'key_points': json.dumps(ai_result['key_points']),
-                'tools_technologies': json.dumps(ai_result['tools_technologies']),
-                'technical_jargon': json.dumps(ai_result.get('technical_jargon', []))
-            }
-            update_object('ProjectDocuments', doc_id, update_data)
+            # Store results in database
+            document.ai_summary = ai_result['summary']
+            document.key_points = json.dumps(ai_result['key_points'])
+            document.tools_technologies = json.dumps(ai_result['tools_technologies'])
+            document.technical_jargon = json.dumps(ai_result.get('technical_jargon', []))
+            
+            db.session.commit()
             
             key_points = ai_result['key_points']
             tools_technologies = ai_result['tools_technologies']
@@ -985,13 +878,10 @@ def summarize_document(doc_id):
             technical_jargon = []
     
     # Get messages for this project
-    messages_result, msg_status = get_objects('Messages', f"project_id = '{project.get('objectId')}'", page_size=50)
-    messages = messages_result if msg_status == 200 else []
-    # Sort by timestamp
-    messages.sort(key=lambda x: x.get('timestamp', ''))
+    messages = Message.query.filter_by(project_id=project.id).order_by(Message.timestamp).all()
     
     # Get full text for display
-    full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
+    full_text = extract_text_from_file(document.file_path, document.file_name)
     
     return render_template('user.html',
                          section='summarize_detail',
@@ -1004,37 +894,28 @@ def summarize_document(doc_id):
                          full_text=full_text,
                          messages=messages)
 
-@app.route('/user/regenerate-summary/<doc_id>', methods=['POST'])
+@app.route('/user/regenerate-summary/<int:doc_id>', methods=['POST'])
 @login_required
 def regenerate_summary(doc_id):
-    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    document = ProjectDocument.query.get_or_404(doc_id)
+    project = Project.query.get(document.project_id)
     
-    if status != 200:
-        return jsonify({'success': False, 'error': 'Document not found'})
-    
-    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
-    
-    if proj_status != 200:
-        return jsonify({'success': False, 'error': 'Project not found'})
-    
-    # Verify ownership
-    if project_result.get('user_id') != current_user.id:
+    if project.user_id != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
     # Extract text and regenerate AI summary
-    full_text = extract_text_from_file(document_result.get('file_path'), document_result.get('file_name'))
+    full_text = extract_text_from_file(document.file_path, document.file_name)
     
     if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
         ai_result = summarize_with_openrouter(full_text)
         
-        # Store results in Backendless
-        update_data = {
-            'ai_summary': ai_result['summary'],
-            'key_points': json.dumps(ai_result['key_points']),
-            'tools_technologies': json.dumps(ai_result['tools_technologies']),
-            'technical_jargon': json.dumps(ai_result.get('technical_jargon', []))
-        }
-        update_object('ProjectDocuments', doc_id, update_data)
+        # Store results in database
+        document.ai_summary = ai_result['summary']
+        document.key_points = json.dumps(ai_result['key_points'])
+        document.tools_technologies = json.dumps(ai_result['tools_technologies'])
+        document.technical_jargon = json.dumps(ai_result.get('technical_jargon', []))
+        
+        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -1049,44 +930,32 @@ def regenerate_summary(doc_id):
             'error': 'Could not extract text from document'
         })
 
-@app.route('/user/download-summary/<doc_id>')
+# FIXED: Download summary as PDF with proper Unicode handling
+@app.route('/user/download-summary/<int:doc_id>')
 @login_required
 def download_summary_pdf(doc_id):
-    document_result, status = get_object_by_id('ProjectDocuments', doc_id)
+    document = ProjectDocument.query.get_or_404(doc_id)
+    project = Project.query.get(document.project_id)
     
-    if status != 200:
-        flash('Document not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    project_result, proj_status = get_object_by_id('Projects', document_result.get('project_id'))
-    
-    if proj_status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('user_dashboard'))
-    
-    # Verify ownership
-    if project_result.get('user_id') != current_user.id:
+    if project.user_id != current_user.id:
         flash('Unauthorized access', 'danger')
         return redirect(url_for('user_dashboard'))
     
-    document = document_result
-    project = project_result
-    
     # Get the summary data
-    if document.get('ai_summary') and document.get('key_points') and document.get('tools_technologies'):
+    if document.ai_summary and document.key_points and document.tools_technologies:
         try:
-            key_points = json.loads(document.get('key_points')) if document.get('key_points') else []
-            tools_technologies = json.loads(document.get('tools_technologies')) if document.get('tools_technologies') else []
-            technical_jargon = json.loads(document.get('technical_jargon')) if document.get('technical_jargon') else []
-            summary = document.get('ai_summary')
+            key_points = json.loads(document.key_points) if document.key_points else []
+            tools_technologies = json.loads(document.tools_technologies) if document.tools_technologies else []
+            technical_jargon = json.loads(document.technical_jargon) if document.technical_jargon else []
+            summary = document.ai_summary
         except:
             key_points = []
             tools_technologies = []
             technical_jargon = []
-            summary = document.get('ai_summary')
+            summary = document.ai_summary
     else:
         # If no AI summary exists, generate it
-        full_text = extract_text_from_file(document.get('file_path'), document.get('file_name'))
+        full_text = extract_text_from_file(document.file_path, document.file_name)
         if full_text and not full_text.startswith(("Preview not available", "File not found", "Error reading")):
             ai_result = summarize_with_openrouter(full_text)
             summary = ai_result['summary']
@@ -1115,11 +984,11 @@ def download_summary_pdf(doc_id):
     
     # Document info - clean text for PDF
     pdf.set_font("Helvetica", "B", 12)
-    safe_file_name = clean_text_for_pdf(document.get('file_name', 'Unknown'))
+    safe_file_name = clean_text_for_pdf(document.file_name)
     pdf.cell(200, 10, f"Document: {safe_file_name}", ln=True)
     
     pdf.set_font("Helvetica", "", 10)
-    safe_project_title = clean_text_for_pdf(project.get('title', 'Unknown'))
+    safe_project_title = clean_text_for_pdf(project.title)
     pdf.cell(200, 10, f"Project: {safe_project_title}", ln=True)
     pdf.cell(200, 10, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
     pdf.ln(10)
@@ -1139,6 +1008,7 @@ def download_summary_pdf(doc_id):
         pdf.set_font("Helvetica", "", 11)
         for i, point in enumerate(key_points, 1):
             safe_point = clean_text_for_pdf(point)
+            # Replace any remaining bullet points
             safe_point = safe_point.replace('•', '-').replace('●', '-').replace('○', '-')
             pdf.multi_cell(0, 5, f"{i}. {safe_point}")
         pdf.ln(5)
@@ -1166,7 +1036,7 @@ def download_summary_pdf(doc_id):
         pdf.ln(5)
     
     # Generate filename for download
-    safe_filename = secure_filename(document.get('file_name', 'document')).replace('.', '_')
+    safe_filename = secure_filename(document.file_name).replace('.', '_')
     download_filename = f"summary_{safe_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     
     # Output PDF to a temporary file first (to avoid encoding issues)
@@ -1181,8 +1051,6 @@ def download_summary_pdf(doc_id):
             pdf_bytes = pdf_output.encode('latin-1', errors='replace')
     except Exception as e:
         # If all else fails, create a simple error PDF
-        logger.error(f"Error generating PDF: {str(e)}")
-        logger.error(traceback.format_exc())
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 16)
@@ -1208,57 +1076,47 @@ def send_message():
     if not project_id or not message_text:
         return jsonify({'success': False, 'error': 'Missing data'})
     
-    # Verify project ownership
-    project_result, status = get_object_by_id('Projects', project_id)
-    if status != 200 or project_result.get('user_id') != current_user.id:
+    project = Project.query.get(project_id)
+    if not project or project.user_id != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
-    message_data = {
-        'project_id': project_id,
-        'sender': 'user',
-        'message': message_text,
-        'timestamp': datetime.now().isoformat(),
-        'is_read': False
-    }
+    message = Message(project_id=project_id, sender='user', message=message_text)
+    db.session.add(message)
+    db.session.commit()
     
-    result, msg_status = create_object('Messages', message_data)
-    
-    if msg_status == 200:
-        return jsonify({
-            'success': True, 
-            'message': message_text, 
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M')
-        })
-    else:
-        return jsonify({'success': False, 'error': 'Failed to send message'})
+    return jsonify({
+        'success': True, 
+        'message': message_text, 
+        'timestamp': message.timestamp.strftime('%Y-%m-%d %H:%M')
+    })
 
 @app.route('/user/chat')
 @login_required
 def user_chat():
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     messages_dict = {}
     unread_counts = {}
     
-    logger.info(f"Loading chat for user {current_user.username}")
-    logger.info(f"Found {len(projects)} projects")
+    print(f"Loading chat for user {current_user.username}")  # Debug
+    print(f"Found {len(projects)} projects")  # Debug
     
     for project in projects:
-        project_id = project.get('objectId')
-        # Get all messages for this project
-        messages_result, msg_status = get_objects('Messages', f"project_id = '{project_id}'", page_size=100)
+        # Get all messages for this project ordered by timestamp
+        project_messages = Message.query.filter_by(project_id=project.id).order_by(Message.timestamp).all()
+        print(f"Project {project.id} ({project.title}) has {len(project_messages)} messages")  # Debug
         
-        if msg_status == 200 and messages_result:
-            # Sort by timestamp
-            sorted_messages = sorted(messages_result, key=lambda x: x.get('timestamp', ''))
-            messages_dict[project_id] = sorted_messages
-            logger.info(f"Project {project_id} ({project.get('title')}) has {len(sorted_messages)} messages")
+        if project_messages:
+            messages_dict[project] = project_messages
         
         # Count unread admin messages
-        unread_result, unread_status = get_objects('Messages', 
-            f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
-        unread_counts[project_id] = len(unread_result) if unread_status == 200 else 0
+        unread_counts[project.id] = Message.query.filter_by(
+            project_id=project.id, 
+            sender='admin', 
+            is_read=False
+        ).count()
+    
+    print(f"Messages dict has {len(messages_dict)} projects with messages")  # Debug
+    print(f"Unread counts: {unread_counts}")  # Debug
     
     return render_template('user.html', 
                          section='chat', 
@@ -1266,60 +1124,44 @@ def user_chat():
                          messages=messages_dict,
                          unread_counts=unread_counts)
 
-@app.route('/user/mark-messages-read/<project_id>', methods=['POST'])
+@app.route('/user/mark-messages-read/<int:project_id>', methods=['POST'])
 @login_required
 def mark_messages_read(project_id):
-    # Verify project ownership
-    project_result, status = get_object_by_id('Projects', project_id)
-    if status != 200 or project_result.get('user_id') != current_user.id:
+    project = Project.query.get_or_404(project_id)
+    if project.user_id != current_user.id:
         return jsonify({'success': False, 'error': 'Unauthorized'})
     
-    # Get all unread admin messages
-    messages_result, msg_status = get_objects('Messages', 
-        f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
-    
-    if msg_status == 200 and messages_result:
-        for message in messages_result:
-            update_object('Messages', message.get('objectId'), {'is_read': True})
+    # Mark all admin messages as read
+    Message.query.filter_by(project_id=project_id, sender='admin', is_read=False).update({'is_read': True})
+    db.session.commit()
     
     return jsonify({'success': True})
 
 @app.route('/user/get-unread-counts')
 @login_required
 def user_get_unread_counts():
-    projects_result, status = get_objects('Projects', f"user_id = '{current_user.id}'", page_size=100)
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.filter_by(user_id=current_user.id).all()
     unread_counts = {}
     
     for project in projects:
-        project_id = project.get('objectId')
-        messages_result, msg_status = get_objects('Messages', 
-            f"project_id = '{project_id}' AND sender = 'admin' AND is_read = false")
-        unread_counts[project_id] = len(messages_result) if msg_status == 200 else 0
+        unread_counts[project.id] = Message.query.filter_by(
+            project_id=project.id, 
+            sender='admin', 
+            is_read=False
+        ).count()
     
     return jsonify(unread_counts)
 
 @app.route('/user/contact')
 @login_required
 def user_contact():
-    # Get contact details (first record)
-    contact_result, status = get_objects('ContactDetails', page_size=1)
-    contact = contact_result[0] if status == 200 and contact_result else None
-    
-    # Get team members
-    team_result, team_status = get_objects('TeamMembers')
-    team_members = team_result if team_status == 200 else []
-    
+    contact = ContactDetails.query.first()
+    team_members = TeamMember.query.all()  # Get all team members
     return render_template('user.html', section='contact', contact=contact, team_members=team_members)
 
 @app.route('/user/profile')
 @login_required
 def user_profile():
-    # Get fresh user data from Backendless
-    user_result, status = get_object_by_id('Users', current_user.id)
-    if status == 200:
-        current_user.profile_photo = user_result.get('profile_photo')
     return render_template('user.html', section='profile', user=current_user)
 
 @app.route('/user/update-profile', methods=['POST'])
@@ -1336,23 +1178,31 @@ def update_profile():
         return redirect(url_for('user_profile'))
     
     if file and allowed_file(file.filename):
-        # Upload to Backendless
-        upload_result = upload_file_to_backendless(file, 'profile_photos')
+        # Create a unique filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Clean filename and ensure it's secure
+        safe_filename = secure_filename(file.filename)
+        filename = f"profile_{current_user.id}_{timestamp}_{safe_filename}"
         
-        if upload_result.get('success'):
-            filename = upload_result.get('filename')
-            
-            # Update user record in Backendless
-            update_data = {'profile_photo': filename}
-            result, status = update_object('Users', current_user.id, update_data)
-            
-            if status == 200:
-                current_user.profile_photo = filename
-                flash('Profile photo updated successfully!', 'success')
-            else:
-                flash('Failed to update profile in database', 'danger')
-        else:
-            flash('Failed to upload file', 'danger')
+        # Save to profile_photos subdirectory
+        profile_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'profile_photos')
+        full_path = os.path.join(profile_photos_dir, filename)
+        
+        # Ensure directory exists
+        os.makedirs(profile_photos_dir, exist_ok=True)
+        
+        # Save the file
+        file.save(full_path)
+        
+        # Store ONLY the filename in the database
+        current_user.profile_photo = filename
+        db.session.commit()
+        
+        print(f"✅ Profile photo saved: {filename}")
+        print(f"✅ Full path: {full_path}")
+        print(f"✅ File exists: {os.path.exists(full_path)}")
+        
+        flash('Profile photo updated successfully!', 'success')
     else:
         flash('Invalid file type. Please upload an image (PNG, JPG, JPEG, GIF).', 'danger')
     
@@ -1377,38 +1227,29 @@ def user_change_password():
         flash('New password must be at least 8 characters long', 'danger')
         return redirect(url_for('user_profile'))
     
-    # Update password in Backendless
-    update_data = {'password': generate_password_hash(new_password)}
-    result, status = update_object('Users', current_user.id, update_data)
-    
-    if status == 200:
-        flash('Password changed successfully!', 'success')
-    else:
-        flash('Failed to update password', 'danger')
-    
+    current_user.password = generate_password_hash(new_password)
+    db.session.commit()
+    flash('Password changed successfully!', 'success')
     return redirect(url_for('user_profile'))
 
-# ============================================================================
-# ADMIN ROUTES
-# ============================================================================
-
+# Admin Routes
 @app.route('/admin/dashboard')
 @admin_required
 def admin_dashboard():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.all()
     total_projects = len(projects)
-    accepted = len([p for p in projects if p.get('status') == 'Accepted'])
-    rejected = len([p for p in projects if p.get('status') == 'Rejected'])
-    in_progress = len([p for p in projects if p.get('status') == 'In Progress'])
-    completed = len([p for p in projects if p.get('status') == 'Completed'])
+    accepted = len([p for p in projects if p.status == 'Accepted'])
+    rejected = len([p for p in projects if p.status == 'Rejected'])
+    in_progress = len([p for p in projects if p.status == 'In Progress'])
+    completed = len([p for p in projects if p.status == 'Completed'])
     
     # Get unread message counts
     for project in projects:
-        messages_result, msg_status = get_objects('Messages', 
-            f"project_id = '{project.get('objectId')}' AND sender = 'user' AND is_read = false")
-        project['unread_user_messages'] = len(messages_result) if msg_status == 200 else 0
+        project.unread_user_messages = Message.query.filter_by(
+            project_id=project.id, 
+            sender='user', 
+            is_read=False
+        ).count()
     
     return render_template('admin.html',
                          section='dashboard',
@@ -1422,98 +1263,74 @@ def admin_dashboard():
 @app.route('/admin/manage-projects')
 @admin_required
 def admin_manage_projects():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.all()
     
     # Get message counts for each project
     for project in projects:
-        messages_result, msg_status = get_objects('Messages', 
-            f"project_id = '{project.get('objectId')}' AND sender = 'user' AND is_read = false")
-        project['unread_user_messages'] = len(messages_result) if msg_status == 200 else 0
+        project.unread_user_messages = Message.query.filter_by(
+            project_id=project.id, 
+            sender='user', 
+            is_read=False
+        ).count()
     
     return render_template('admin.html', section='manage_projects', projects=projects)
 
-@app.route('/admin/update-project-status/<project_id>/<status>')
+@app.route('/admin/update-project-status/<int:project_id>/<status>')
 @admin_required
 def update_project_status(project_id, status):
-    project_result, proj_status = get_object_by_id('Projects', project_id)
+    project = Project.query.get_or_404(project_id)
+    old_status = project.status
+    project.status = status
+    db.session.commit()
     
-    if proj_status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('admin_manage_projects'))
+    # Send automatic message about status change
+    status_messages = {
+        'Accepted': '✅ Your project has been accepted! We will start working on it soon.',
+        'Rejected': '❌ Your project has been rejected. Please contact admin for more details.',
+        'In Progress': '🔄 Good news! Your project is now in progress. Check tracking for updates.',
+        'Completed': '🎉 Congratulations! Your project has been completed successfully.'
+    }
     
-    old_status = project_result.get('status')
+    if status in status_messages and old_status != status:
+        auto_message = Message(
+            project_id=project_id,
+            sender='admin',
+            message=f"Project status changed from '{old_status}' to '{status}'. {status_messages.get(status, '')}"
+        )
+        db.session.add(auto_message)
+        db.session.commit()
     
-    # Update project status
-    update_data = {'status': status}
-    result, update_status = update_object('Projects', project_id, update_data)
-    
-    if update_status == 200:
-        # Send automatic message about status change
-        status_messages = {
-            'Accepted': '✅ Your project has been accepted! We will start working on it soon.',
-            'Rejected': '❌ Your project has been rejected. Please contact admin for more details.',
-            'In Progress': '🔄 Good news! Your project is now in progress. Check tracking for updates.',
-            'Completed': '🎉 Congratulations! Your project has been completed successfully.'
-        }
-        
-        if status in status_messages and old_status != status:
-            message_data = {
-                'project_id': project_id,
-                'sender': 'admin',
-                'message': f"Project status changed from '{old_status}' to '{status}'. {status_messages.get(status, '')}",
-                'timestamp': datetime.now().isoformat(),
-                'is_read': False
-            }
-            create_object('Messages', message_data)
-        
-        flash(f'Project status updated to {status}', 'success')
-    else:
-        flash('Failed to update project status', 'danger')
-    
+    flash(f'Project status updated to {status}', 'success')
     return redirect(url_for('admin_manage_projects'))
 
 @app.route('/admin/update-tracking')
 @admin_required
 def admin_update_tracking():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.all()
     
     # Calculate progress for each project
     for project in projects:
-        tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project.get('objectId')}'")
-        if track_status == 200 and tracking_result:
-            total_steps = len(tracking_result)
-            completed_steps = len([s for s in tracking_result if s.get('step_status') == 'Completed'])
-            project['progress'] = (completed_steps / total_steps * 100) if total_steps > 0 else 0
-        else:
-            project['progress'] = 0
+        total_steps = len(project.tracking_steps)
+        completed_steps = len([s for s in project.tracking_steps if s.step_status == 'Completed'])
+        project.progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0
     
     return render_template('admin.html', section='update_tracking', projects=projects)
 
-@app.route('/admin/project/<project_id>/tracking')
+@app.route('/admin/project/<int:project_id>/tracking')
 @admin_required
 def view_project_tracking_admin(project_id):
-    project_result, status = get_object_by_id('Projects', project_id)
-    
-    if status != 200:
-        flash('Project not found', 'danger')
-        return redirect(url_for('admin_dashboard'))
-    
-    tracking_result, track_status = get_objects('ProjectTracking', f"project_id = '{project_id}'")
-    tracking_steps = tracking_result if track_status == 200 else []
-    
-    documents_result, doc_status = get_objects('ProjectDocuments', f"project_id = '{project_id}'")
-    documents = documents_result if doc_status == 200 else []
+    project = Project.query.get_or_404(project_id)
+    tracking_steps = ProjectTracking.query.filter_by(project_id=project_id).all()
+    documents = ProjectDocument.query.filter_by(project_id=project_id).all()
     
     # Calculate progress
     total_steps = len(tracking_steps)
-    completed_steps = len([s for s in tracking_steps if s.get('step_status') == 'Completed'])
+    completed_steps = len([s for s in tracking_steps if s.step_status == 'Completed'])
     progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0
     
     return render_template('admin.html', 
                          section='tracking_detail',
-                         project=project_result,
+                         project=project,
                          tracking_steps=tracking_steps,
                          documents=documents,
                          progress=progress)
@@ -1528,130 +1345,116 @@ def add_tracking_step():
         flash('Please provide step name', 'danger')
         return redirect(url_for('admin_update_tracking'))
     
-    tracking_data = {
-        'project_id': project_id,
-        'step_name': step_name,
-        'step_status': 'Pending',
-        'created_at': datetime.now().isoformat()
-    }
+    tracking = ProjectTracking(project_id=project_id, step_name=step_name)
+    db.session.add(tracking)
+    db.session.commit()
     
-    result, status = create_object('ProjectTracking', tracking_data)
+    # Notify user about new tracking step
+    message = Message(
+        project_id=project_id,
+        sender='admin',
+        message=f"📋 New tracking step added: '{step_name}'. Check your project tracking for details."
+    )
+    db.session.add(message)
+    db.session.commit()
     
-    if status == 200:
-        # Notify user about new tracking step
-        message_data = {
-            'project_id': project_id,
-            'sender': 'admin',
-            'message': f"📋 New tracking step added: '{step_name}'. Check your project tracking for details.",
-            'timestamp': datetime.now().isoformat(),
-            'is_read': False
-        }
-        create_object('Messages', message_data)
-        
-        flash('Tracking step added successfully!', 'success')
-    else:
-        flash('Failed to add tracking step', 'danger')
-    
+    flash('Tracking step added successfully!', 'success')
     return redirect(url_for('view_project_tracking_admin', project_id=project_id))
 
-@app.route('/admin/update-step-status/<step_id>', methods=['POST'])
+@app.route('/admin/update-step-status/<int:step_id>', methods=['POST'])
 @admin_required
 def update_step_status(step_id):
-    step_result, status = get_object_by_id('ProjectTracking', step_id)
-    
-    if status != 200:
-        flash('Step not found', 'danger')
-        return redirect(url_for('admin_dashboard'))
-    
-    new_status = request.form.get('status')
-    old_status = step_result.get('step_status')
-    
-    update_data = {'step_status': new_status}
+    step = ProjectTracking.query.get_or_404(step_id)
+    status = request.form.get('status')
+    old_status = step.step_status
+    step.step_status = status
     
     # Handle file uploads
-    proof_filenames = []
     if 'proof_file' in request.files:
         files = request.files.getlist('proof_file')
+        proof_filenames = []
         for file in files:
             if file and allowed_file(file.filename):
-                upload_result = upload_file_to_backendless(file, 'project_documents')
-                if upload_result.get('success'):
-                    filename = upload_result.get('filename')
-                    proof_filenames.append(filename)
-                    
-                    # Add to ProjectDocuments
-                    doc_data = {
-                        'project_id': step_result.get('project_id'),
-                        'file_name': file.filename,
-                        'file_path': filename,
-                        'file_type': 'proof',
-                        'uploaded_at': datetime.now().isoformat()
-                    }
-                    create_object('ProjectDocuments', doc_data)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = secure_filename(f"proof_{step_id}_{timestamp}_{file.filename}")
+                
+                # Save to project_documents directory
+                project_docs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents')
+                full_path = os.path.join(project_docs_dir, filename)
+                file.save(full_path)
+                
+                proof_filenames.append(filename)
+                
+                # Also add to ProjectDocument table with just filename
+                document = ProjectDocument(
+                    project_id=step.project_id,
+                    file_name=file.filename,
+                    file_path=filename,  # Store only filename
+                    file_type='proof',
+                    uploaded_at=datetime.utcnow()
+                )
+                db.session.add(document)
+                print(f"✅ Added proof file: {filename}")
+        
+        if proof_filenames:
+            if step.proof_files:
+                step.proof_files = step.proof_files + ',' + ','.join(proof_filenames)
+            else:
+                step.proof_files = ','.join(proof_filenames)
     
-    if proof_filenames:
-        existing_files = step_result.get('proof_files', '')
-        if existing_files:
-            update_data['proof_files'] = existing_files + ',' + ','.join(proof_filenames)
-        else:
-            update_data['proof_files'] = ','.join(proof_filenames)
-    
-    image_filenames = []
     if 'images' in request.files:
         images = request.files.getlist('images')
+        image_filenames = []
         for image in images:
             if image and allowed_file(image.filename):
-                upload_result = upload_file_to_backendless(image, 'project_documents')
-                if upload_result.get('success'):
-                    filename = upload_result.get('filename')
-                    image_filenames.append(filename)
-                    
-                    # Add to ProjectDocuments
-                    doc_data = {
-                        'project_id': step_result.get('project_id'),
-                        'file_name': image.filename,
-                        'file_path': filename,
-                        'file_type': 'image',
-                        'uploaded_at': datetime.now().isoformat()
-                    }
-                    create_object('ProjectDocuments', doc_data)
-    
-    if image_filenames:
-        existing_images = step_result.get('images', '')
-        if existing_images:
-            update_data['images'] = existing_images + ',' + ','.join(image_filenames)
-        else:
-            update_data['images'] = ','.join(image_filenames)
-    
-    update_data['updated_at'] = datetime.now().isoformat()
-    
-    result, update_status = update_object('ProjectTracking', step_id, update_data)
-    
-    if update_status == 200 and old_status != new_status:
-        # Notify user about step status change
-        status_icon = '✅' if new_status == 'Completed' else '⏳'
-        message_data = {
-            'project_id': step_result.get('project_id'),
-            'sender': 'admin',
-            'message': f"{status_icon} Tracking step '{step_result.get('step_name')}' is now {new_status}.",
-            'timestamp': datetime.now().isoformat(),
-            'is_read': False
-        }
-        create_object('Messages', message_data)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = secure_filename(f"image_{step_id}_{timestamp}_{image.filename}")
+                
+                # Save to project_documents directory
+                project_docs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents')
+                full_path = os.path.join(project_docs_dir, filename)
+                image.save(full_path)
+                
+                image_filenames.append(filename)
+                
+                # Also add to ProjectDocument table with just filename
+                document = ProjectDocument(
+                    project_id=step.project_id,
+                    file_name=image.filename,
+                    file_path=filename,  # Store only filename
+                    file_type='image',
+                    uploaded_at=datetime.utcnow()
+                )
+                db.session.add(document)
+                print(f"✅ Added image: {filename}")
         
-        flash('Step updated successfully!', 'success')
-    elif update_status == 200:
-        flash('Step updated successfully!', 'success')
-    else:
-        flash('Failed to update step', 'danger')
+        if image_filenames:
+            if step.images:
+                step.images = step.images + ',' + ','.join(image_filenames)
+            else:
+                step.images = ','.join(image_filenames)
     
-    return redirect(url_for('view_project_tracking_admin', project_id=step_result.get('project_id')))
+    step.updated_at = datetime.utcnow()
+    db.session.commit()
+    
+    # Notify user about step status change
+    if old_status != status:
+        status_icon = '✅' if status == 'Completed' else '⏳'
+        message = Message(
+            project_id=step.project_id,
+            sender='admin',
+            message=f"{status_icon} Tracking step '{step.step_name}' is now {status}."
+        )
+        db.session.add(message)
+        db.session.commit()
+    
+    flash('Step updated successfully!', 'success')
+    return redirect(url_for('view_project_tracking_admin', project_id=step.project_id))
 
 @app.route('/admin/upload-documents')
 @admin_required
 def admin_upload_documents():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
+    projects = Project.query.all()
     return render_template('admin.html', section='upload_documents', projects=projects)
 
 @app.route('/admin/upload-project-document', methods=['POST'])
@@ -1669,39 +1472,40 @@ def upload_project_document():
     
     file = request.files['document']
     if file and allowed_file(file.filename):
-        # Upload to Backendless
-        upload_result = upload_file_to_backendless(file, 'project_documents')
+        # Create a unique filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = secure_filename(f"doc_{project_id}_{timestamp}_{file.filename}")
         
-        if upload_result.get('success'):
-            filename = upload_result.get('filename')
-            
-            # Store in ProjectDocuments
-            doc_data = {
-                'project_id': project_id,
-                'file_name': file.filename,
-                'file_path': filename,
-                'file_type': 'document',
-                'uploaded_at': datetime.now().isoformat()
-            }
-            
-            result, doc_status = create_object('ProjectDocuments', doc_data)
-            
-            if doc_status == 200:
-                # Notify user about new document
-                message_data = {
-                    'project_id': project_id,
-                    'sender': 'admin',
-                    'message': f"📎 New document uploaded: '{file.filename}'. You can view it in the Summarize Documents section.",
-                    'timestamp': datetime.now().isoformat(),
-                    'is_read': False
-                }
-                create_object('Messages', message_data)
-                
-                flash('Document uploaded successfully!', 'success')
-            else:
-                flash('Failed to save document record', 'danger')
-        else:
-            flash('Failed to upload file', 'danger')
+        # Save file to project_documents directory
+        project_docs_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents')
+        full_path = os.path.join(project_docs_dir, filename)
+        file.save(full_path)
+        
+        # Store ONLY the filename in database
+        document = ProjectDocument(
+            project_id=project_id, 
+            file_name=file.filename, 
+            file_path=filename,  # Store only filename, not full path
+            file_type='document',
+            uploaded_at=datetime.utcnow()
+        )
+        db.session.add(document)
+        db.session.commit()
+        
+        # Verify the document was saved
+        saved_doc = ProjectDocument.query.get(document.id)
+        print(f"✅ Document saved: ID={saved_doc.id}, Name={saved_doc.file_name}, Filename={saved_doc.file_path}")
+        
+        # Notify user about new document
+        message = Message(
+            project_id=project_id,
+            sender='admin',
+            message=f"📎 New document uploaded: '{file.filename}'. You can view it in the Summarize Documents section."
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        flash('Document uploaded successfully!', 'success')
     else:
         flash('Invalid file type. Allowed: PDF, DOC, DOCX, TXT, images', 'danger')
     
@@ -1710,92 +1514,153 @@ def upload_project_document():
 @app.route('/admin/fix-documents')
 @admin_required
 def fix_documents():
-    # This function is less critical now with Backendless,
-    # but we'll keep a simplified version for local file cleanup
-    
-    tracking_result, status = get_objects('ProjectTracking', page_size=100)
-    tracking_steps = tracking_result if status == 200 else []
-    
+    # Find all tracking steps with proof files or images
+    tracking_steps = ProjectTracking.query.all()
     fixed_count = 0
     project_files = {}
     
-    # Check for files in tracking that aren't in ProjectDocuments
     for step in tracking_steps:
-        project_id = step.get('project_id')
+        project_id = step.project_id
         if project_id not in project_files:
             project_files[project_id] = {
                 'proof': [],
                 'images': []
             }
         
-        # Check proof files
-        if step.get('proof_files'):
-            files = step.get('proof_files').split(',')
+        # Fix proof files
+        if step.proof_files:
+            files = step.proof_files.split(',')
             for filename in files:
-                if filename and filename.strip():
-                    # Check if exists in ProjectDocuments
-                    docs_result, doc_status = get_objects('ProjectDocuments', f"file_path = '{filename}'")
-                    if doc_status != 200 or not docs_result:
-                        # Add missing document
-                        doc_data = {
-                            'project_id': project_id,
-                            'file_name': filename.split('/')[-1],
-                            'file_path': filename,
-                            'file_type': 'proof',
-                            'uploaded_at': step.get('updated_at') or datetime.now().isoformat()
-                        }
-                        create_object('ProjectDocuments', doc_data)
+                if filename and filename.strip():  # Check if not empty
+                    # Check if this file already exists in ProjectDocument
+                    existing = ProjectDocument.query.filter_by(file_path=filename).first()
+                    if not existing:
+                        # Extract original filename (might be in path format)
+                        original_filename = filename.split('/')[-1] if '/' in filename else filename
+                        doc = ProjectDocument(
+                            project_id=step.project_id,
+                            file_name=original_filename,
+                            file_path=original_filename,  # Store only filename
+                            file_type='proof',
+                            uploaded_at=step.updated_at or datetime.utcnow()
+                        )
+                        db.session.add(doc)
                         fixed_count += 1
-                        project_files[project_id]['proof'].append(filename)
+                        project_files[project_id]['proof'].append(original_filename)
+                        print(f"✅ Added missing proof file: {original_filename} for project {project_id}")
         
-        # Check images
-        if step.get('images'):
-            images = step.get('images').split(',')
+        # Fix images
+        if step.images:
+            images = step.images.split(',')
             for filename in images:
-                if filename and filename.strip():
-                    docs_result, doc_status = get_objects('ProjectDocuments', f"file_path = '{filename}'")
-                    if doc_status != 200 or not docs_result:
-                        doc_data = {
-                            'project_id': project_id,
-                            'file_name': filename.split('/')[-1],
-                            'file_path': filename,
-                            'file_type': 'image',
-                            'uploaded_at': step.get('updated_at') or datetime.now().isoformat()
-                        }
-                        create_object('ProjectDocuments', doc_data)
+                if filename and filename.strip():  # Check if not empty
+                    # Check if this image already exists in ProjectDocument
+                    existing = ProjectDocument.query.filter_by(file_path=filename).first()
+                    if not existing:
+                        # Extract original filename
+                        original_filename = filename.split('/')[-1] if '/' in filename else filename
+                        doc = ProjectDocument(
+                            project_id=step.project_id,
+                            file_name=original_filename,
+                            file_path=original_filename,  # Store only filename
+                            file_type='image',
+                            uploaded_at=step.updated_at or datetime.utcnow()
+                        )
+                        db.session.add(doc)
                         fixed_count += 1
-                        project_files[project_id]['images'].append(filename)
+                        project_files[project_id]['images'].append(original_filename)
+                        print(f"✅ Added missing image: {original_filename} for project {project_id}")
+    
+    db.session.commit()
+    
+    # Also check for any orphaned files in the uploads directory
+    upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'project_documents')
+    if os.path.exists(upload_dir):
+        for filename in os.listdir(upload_dir):
+            # Check if this file exists in database
+            existing = ProjectDocument.query.filter_by(file_path=filename).first()
+            if not existing:
+                # Try to determine file type from filename
+                file_type = 'document'
+                if filename.startswith('proof_'):
+                    file_type = 'proof'
+                elif filename.startswith('image_'):
+                    file_type = 'image'
+                
+                # Try to extract project_id from filename
+                try:
+                    parts = filename.split('_')
+                    if len(parts) >= 2:
+                        if filename.startswith('proof_') or filename.startswith('image_'):
+                            if len(parts) >= 3:
+                                step_id = parts[1]
+                                # Try to find step to get project_id
+                                step = ProjectTracking.query.filter_by(id=step_id).first()
+                                if step:
+                                    project_id = step.project_id
+                                else:
+                                    project_id = 1
+                            else:
+                                project_id = 1
+                        else:  # doc_ format
+                            if len(parts) >= 2:
+                                try:
+                                    project_id = int(parts[1])
+                                except:
+                                    project_id = 1
+                            else:
+                                project_id = 1
+                        
+                        doc = ProjectDocument(
+                            project_id=project_id,
+                            file_name=filename,
+                            file_path=filename,
+                            file_type=file_type,
+                            uploaded_at=datetime.utcnow()
+                        )
+                        db.session.add(doc)
+                        fixed_count += 1
+                        print(f"✅ Added orphaned file: {filename} for project {project_id} as type {file_type}")
+                except Exception as e:
+                    print(f"⚠️ Could not process orphaned file {filename}: {str(e)}")
+    
+    db.session.commit()
+    
+    # Get summary of fixed files by project
+    summary = ""
+    for project_id, files in project_files.items():
+        project = Project.query.get(project_id)
+        if project:
+            total = len(files['proof']) + len(files['images'])
+            if total > 0:
+                summary += f"<br>📁 {project.title}: {total} files ({len(files['proof'])} proofs, {len(files['images'])} images)"
     
     if fixed_count > 0:
-        flash(f'✅ Fixed {fixed_count} missing documents in Backendless!', 'success')
+        flash(f'✅ Fixed {fixed_count} missing documents! They should now appear in the Summarize Documents section.{summary}', 'success')
     else:
-        flash('No missing documents found.', 'info')
+        flash('No missing documents found. All files are already in the database.', 'info')
     
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/messages')
 @admin_required
 def admin_messages():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.all()
     messages_dict = {}
     unread_counts = {}
     
     for project in projects:
-        project_id = project.get('objectId')
         # Get all messages for this project
-        messages_result, msg_status = get_objects('Messages', f"project_id = '{project_id}'", page_size=100)
-        
-        if msg_status == 200 and messages_result:
-            # Sort by timestamp
-            sorted_messages = sorted(messages_result, key=lambda x: x.get('timestamp', ''))
-            messages_dict[project_id] = sorted_messages
+        project_messages = Message.query.filter_by(project_id=project.id).order_by(Message.timestamp).all()
+        if project_messages:
+            messages_dict[project] = project_messages
         
         # Count unread user messages
-        unread_result, unread_status = get_objects('Messages', 
-            f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
-        unread_counts[project_id] = len(unread_result) if unread_status == 200 else 0
+        unread_counts[project.id] = Message.query.filter_by(
+            project_id=project.id, 
+            sender='user', 
+            is_read=False
+        ).count()
     
     return render_template('admin.html', 
                          section='messages', 
@@ -1812,67 +1677,44 @@ def send_reply():
     if not project_id or not message_text:
         return jsonify({'success': False, 'error': 'Missing data'})
     
-    message_data = {
-        'project_id': project_id,
-        'sender': 'admin',
-        'message': message_text,
-        'timestamp': datetime.now().isoformat(),
-        'is_read': False
-    }
+    message = Message(project_id=project_id, sender='admin', message=message_text)
+    db.session.add(message)
+    db.session.commit()
     
-    result, status = create_object('Messages', message_data)
-    
-    if status == 200:
-        return jsonify({'success': True})
-    else:
-        return jsonify({'success': False, 'error': 'Failed to send message'})
+    return jsonify({'success': True})
 
-@app.route('/admin/mark-messages-read/<project_id>', methods=['POST'])
+@app.route('/admin/mark-messages-read/<int:project_id>', methods=['POST'])
 @admin_required
 def admin_mark_messages_read(project_id):
-    # Get all unread user messages
-    messages_result, msg_status = get_objects('Messages', 
-        f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
-    
-    if msg_status == 200 and messages_result:
-        for message in messages_result:
-            update_object('Messages', message.get('objectId'), {'is_read': True})
+    # Mark all user messages as read
+    Message.query.filter_by(project_id=project_id, sender='user', is_read=False).update({'is_read': True})
+    db.session.commit()
     
     return jsonify({'success': True})
 
 @app.route('/admin/get-unread-counts')
 @admin_required
 def admin_get_unread_counts():
-    projects_result, status = get_objects('Projects', page_size=100)
-    projects = projects_result if status == 200 else []
-    
+    projects = Project.query.all()
     unread_counts = {}
     
     for project in projects:
-        project_id = project.get('objectId')
-        messages_result, msg_status = get_objects('Messages', 
-            f"project_id = '{project_id}' AND sender = 'user' AND is_read = false")
-        unread_counts[project_id] = len(messages_result) if msg_status == 200 else 0
+        unread_counts[project.id] = Message.query.filter_by(
+            project_id=project.id, 
+            sender='user', 
+            is_read=False
+        ).count()
     
     return jsonify(unread_counts)
 
 @app.route('/admin/contact-details')
 @admin_required
 def admin_contact_details():
-    # Get contact details (first record)
-    contact_result, status = get_objects('ContactDetails', page_size=1)
-    contact = contact_result[0] if status == 200 and contact_result else None
-    
-    # Get team members
-    team_result, team_status = get_objects('TeamMembers')
-    team_members = team_result if team_status == 200 else []
-    
+    contact = ContactDetails.query.first()
+    team_members = TeamMember.query.all()
     return render_template('admin.html', section='contact_details', contact=contact, team_members=team_members)
 
-# ============================================================================
-# TEAM MEMBER MANAGEMENT ROUTES
-# ============================================================================
-
+# Team Member Management Routes
 @app.route('/admin/add-team-member', methods=['POST'])
 @admin_required
 def add_team_member():
@@ -1890,140 +1732,116 @@ def add_team_member():
     if 'photo' in request.files:
         file = request.files['photo']
         if file and file.filename and allowed_file(file.filename):
-            upload_result = upload_file_to_backendless(file, 'team_photos')
-            if upload_result.get('success'):
-                photo_filename = upload_result.get('filename')
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_filename = secure_filename(file.filename)
+            filename = f"team_{timestamp}_{safe_filename}"
+            
+            # Save to team_photos directory
+            team_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos')
+            full_path = os.path.join(team_photos_dir, filename)
+            os.makedirs(team_photos_dir, exist_ok=True)
+            file.save(full_path)
+            photo_filename = filename
     
     # Create new team member
-    member_data = {
-        'name': name,
-        'role': role,
-        'email': email,
-        'mobile': mobile,
-        'photo': photo_filename,
-        'created_at': datetime.now().isoformat()
-    }
+    team_member = TeamMember(
+        name=name,
+        role=role,
+        email=email,
+        mobile=mobile,
+        photo=photo_filename
+    )
     
-    result, status = create_object('TeamMembers', member_data)
+    db.session.add(team_member)
+    db.session.commit()
     
-    if status == 200:
-        flash(f'Team member {name} added successfully!', 'success')
-    else:
-        flash('Failed to add team member', 'danger')
-    
+    flash(f'Team member {name} added successfully!', 'success')
     return redirect(url_for('admin_contact_details'))
 
-@app.route('/admin/edit-team-member/<member_id>', methods=['POST'])
+@app.route('/admin/edit-team-member/<int:member_id>', methods=['POST'])
 @admin_required
 def edit_team_member(member_id):
-    member_result, status = get_object_by_id('TeamMembers', member_id)
+    member = TeamMember.query.get_or_404(member_id)
     
-    if status != 200:
-        flash('Team member not found', 'danger')
-        return redirect(url_for('admin_contact_details'))
-    
-    update_data = {
-        'name': request.form.get('name', member_result.get('name')),
-        'role': request.form.get('role', member_result.get('role')),
-        'email': request.form.get('email', member_result.get('email')),
-        'mobile': request.form.get('mobile', member_result.get('mobile'))
-    }
+    member.name = request.form.get('name', member.name)
+    member.role = request.form.get('role', member.role)
+    member.email = request.form.get('email', member.email)
+    member.mobile = request.form.get('mobile', member.mobile)
     
     # Handle photo upload
     if 'photo' in request.files:
         file = request.files['photo']
         if file and file.filename and allowed_file(file.filename):
-            upload_result = upload_file_to_backendless(file, 'team_photos')
-            if upload_result.get('success'):
-                update_data['photo'] = upload_result.get('filename')
-                
-                # Delete old photo if exists locally
-                if member_result.get('photo'):
-                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member_result.get('photo'))
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_filename = secure_filename(file.filename)
+            filename = f"team_{timestamp}_{safe_filename}"
+            
+            # Save to team_photos directory
+            team_photos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos')
+            full_path = os.path.join(team_photos_dir, filename)
+            os.makedirs(team_photos_dir, exist_ok=True)
+            file.save(full_path)
+            
+            # Delete old photo if exists
+            if member.photo:
+                old_path = os.path.join(team_photos_dir, member.photo)
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+            
+            member.photo = filename
     
-    result, update_status = update_object('TeamMembers', member_id, update_data)
-    
-    if update_status == 200:
-        flash(f'Team member updated successfully!', 'success')
-    else:
-        flash('Failed to update team member', 'danger')
-    
+    db.session.commit()
+    flash(f'Team member {member.name} updated successfully!', 'success')
     return redirect(url_for('admin_contact_details'))
 
-@app.route('/admin/delete-team-member/<member_id>', methods=['POST'])
+@app.route('/admin/delete-team-member/<int:member_id>', methods=['POST'])
 @admin_required
 def delete_team_member(member_id):
-    member_result, status = get_object_by_id('TeamMembers', member_id)
+    member = TeamMember.query.get_or_404(member_id)
     
-    if status == 200 and member_result.get('photo'):
-        # Delete photo if exists locally
-        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member_result.get('photo'))
+    # Delete photo if exists
+    if member.photo:
+        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], 'team_photos', member.photo)
         if os.path.exists(photo_path):
             os.remove(photo_path)
     
-    result, delete_status = delete_object('TeamMembers', member_id)
-    
-    if delete_status == 200:
-        flash(f'Team member deleted successfully!', 'success')
-    else:
-        flash('Failed to delete team member', 'danger')
-    
+    db.session.delete(member)
+    db.session.commit()
+    flash(f'Team member {member.name} deleted successfully!', 'success')
     return redirect(url_for('admin_contact_details'))
 
-@app.route('/admin/get-team-member/<member_id>')
+@app.route('/admin/get-team-member/<int:member_id>')
 @admin_required
 def get_team_member(member_id):
-    member_result, status = get_object_by_id('TeamMembers', member_id)
-    
-    if status == 200:
-        return jsonify({
-            'id': member_id,
-            'name': member_result.get('name'),
-            'role': member_result.get('role'),
-            'email': member_result.get('email'),
-            'mobile': member_result.get('mobile'),
-            'photo': member_result.get('photo')
-        })
-    else:
-        return jsonify({'error': 'Member not found'}), 404
+    member = TeamMember.query.get_or_404(member_id)
+    return jsonify({
+        'id': member.id,
+        'name': member.name,
+        'role': member.role,
+        'email': member.email,
+        'mobile': member.mobile,
+        'photo': member.photo
+    })
 
 @app.route('/admin/update-contact', methods=['POST'])
 @admin_required
 def update_contact():
-    email = request.form.get('email')
-    phone = request.form.get('phone')
-    address = request.form.get('address')
+    contact = ContactDetails.query.first()
+    if not contact:
+        contact = ContactDetails()
     
-    # Get existing contact
-    contact_result, status = get_objects('ContactDetails', page_size=1)
+    contact.email = request.form.get('email')
+    contact.phone = request.form.get('phone')
+    contact.address = request.form.get('address')
     
-    contact_data = {
-        'email': email,
-        'phone': phone,
-        'address': address
-    }
+    if not contact.id:
+        db.session.add(contact)
     
-    if status == 200 and contact_result:
-        # Update existing
-        contact_id = contact_result[0].get('objectId')
-        result, update_status = update_object('ContactDetails', contact_id, contact_data)
-    else:
-        # Create new
-        result, update_status = create_object('ContactDetails', contact_data)
-    
-    if update_status == 200:
-        flash('Contact details updated successfully!', 'success')
-    else:
-        flash('Failed to update contact details', 'danger')
-    
+    db.session.commit()
+    flash('Contact details updated successfully!', 'success')
     return redirect(url_for('admin_contact_details'))
 
-# ============================================================================
-# DEBUG ROUTES
-# ============================================================================
-
+# Debug route to check documents
 @app.route('/debug/documents')
 @admin_required
 def debug_documents():
@@ -2033,25 +1851,22 @@ def debug_documents():
     if os.path.exists(docs_dir):
         files = os.listdir(docs_dir)
     
-    documents_result, status = get_objects('ProjectDocuments', page_size=100)
-    documents = documents_result if status == 200 else []
-    
+    documents = ProjectDocument.query.all()
     doc_info = []
     for doc in documents:
-        file_exists = os.path.exists(os.path.join(docs_dir, doc.get('file_path', ''))) if doc.get('file_path') else False
         doc_info.append({
-            'id': doc.get('objectId'),
-            'file_name': doc.get('file_name'),
-            'file_path': doc.get('file_path'),
-            'project_id': doc.get('project_id'),
-            'file_type': doc.get('file_type'),
-            'uploaded_at': doc.get('uploaded_at'),
-            'file_exists': file_exists,
-            'url': url_for('project_document', filename=doc.get('file_path')) if doc.get('file_path') else None
+            'id': doc.id,
+            'file_name': doc.file_name,
+            'file_path': doc.file_path,
+            'project_id': doc.project_id,
+            'file_type': doc.file_type,
+            'uploaded_at': str(doc.uploaded_at),
+            'file_exists': os.path.exists(os.path.join(docs_dir, doc.file_path)) if doc.file_path else False,
+            'url': url_for('project_document', filename=doc.file_path) if doc.file_path else None
         })
     
     result = {
-        'documents_in_backendless': len(documents),
+        'documents_in_db': len(documents),
         'files_in_directory': len(files),
         'directory': docs_dir,
         'documents': doc_info,
@@ -2060,6 +1875,7 @@ def debug_documents():
     
     return jsonify(result)
 
+# Debug route to check profile photos
 @app.route('/debug/profile-photos')
 @login_required
 def debug_profile_photos():
@@ -2082,34 +1898,56 @@ def debug_profile_photos():
     
     return jsonify(result)
 
-# ============================================================================
-# INITIALIZATION
-# ============================================================================
-
-def initialize_backendless_tables():
-    """Create default data in Backendless if needed"""
-    
-    # Check if contact details exist
-    contact_result, status = get_objects('ContactDetails', page_size=1)
-    if status != 200 or not contact_result:
-        # Create default contact
-        default_contact = {
-            'email': 'admin@example.com',
-            'phone': '+1234567890',
-            'address': '123 Main Street, City, Country'
-        }
-        create_object('ContactDetails', default_contact)
-        logger.info("✅ Created default contact details")
-    
-    logger.info("📊 Backendless initialization complete")
-
 if __name__ == '__main__':
-    try:
-        initialize_backendless_tables()
-    except Exception as e:
-        logger.error(f"Initialization error: {str(e)}")
-        logger.error(traceback.format_exc())
-        logger.warning("⚠️ Some tables may not exist. Please create them in Backendless.")
-
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    with app.app_context():
+        db.create_all()
+        # Add new columns if they don't exist
+        add_missing_columns()
+        
+        # Create default contact if not exists
+        if not ContactDetails.query.first():
+            default_contact = ContactDetails(
+                email='admin@example.com',
+                phone='+1234567890',
+                address='123 Main Street, City, Country'
+            )
+            db.session.add(default_contact)
+            db.session.commit()
+        
+        # Check for existing documents
+        all_docs = ProjectDocument.query.all()
+        print(f"📊 Total documents in database: {len(all_docs)}")
+        for doc in all_docs:
+            print(f"  - Document: {doc.file_name} -> {doc.file_path} (Type: {doc.file_type})")
+        
+        # Check for tracking steps with files not in ProjectDocument
+        tracking_steps = ProjectTracking.query.all()
+        missing_count = 0
+        for step in tracking_steps:
+            if step.proof_files:
+                files = step.proof_files.split(',')
+                for file_path in files:
+                    if file_path and file_path.strip():
+                        # Extract just the filename
+                        filename = file_path.split('/')[-1] if '/' in file_path else file_path
+                        existing = ProjectDocument.query.filter_by(file_path=filename).first()
+                        if not existing:
+                            print(f"⚠️ Missing document in ProjectDocument: {filename} (from {file_path})")
+                            missing_count += 1
+            if step.images:
+                images = step.images.split(',')
+                for image_path in images:
+                    if image_path and image_path.strip():
+                        # Extract just the filename
+                        filename = image_path.split('/')[-1] if '/' in image_path else image_path
+                        existing = ProjectDocument.query.filter_by(file_path=filename).first()
+                        if not existing:
+                            print(f"⚠️ Missing image in ProjectDocument: {filename} (from {image_path})")
+                            missing_count += 1
+        
+        if missing_count > 0:
+            print(f"\n⚠️ Found {missing_count} missing files. Visit /admin/fix-documents to fix them.")
+        else:
+            print("\n✅ All files are properly linked to ProjectDocument table.")
+    
+    app.run(debug=True)
